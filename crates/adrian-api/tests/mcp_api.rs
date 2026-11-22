@@ -38,6 +38,13 @@ async fn initialize_reports_the_protocol_and_a_tools_capability() {
     assert_eq!(body["result"]["protocolVersion"], "2025-06-18");
     assert!(body["result"]["capabilities"]["tools"].is_object());
     assert_eq!(body["result"]["serverInfo"]["name"], "adrian");
+    let instructions = body["result"]["instructions"]
+        .as_str()
+        .expect("initialize carries instructions so a client learns the contract at handshake");
+    assert!(
+        instructions.contains("adrian://docs/madr"),
+        "instructions must point at the contract document, got {instructions}"
+    );
 }
 
 #[tokio::test]

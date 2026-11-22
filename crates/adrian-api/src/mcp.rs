@@ -115,6 +115,7 @@ async fn handle_one(state: &AppState, request: Value) -> Option<Value> {
                 "protocolVersion": PROTOCOL_VERSION,
                 "capabilities": { "tools": {}, "resources": {} },
                 "serverInfo": { "name": "adrian", "version": adrian_core::VERSION },
+                "instructions": SERVER_INSTRUCTIONS,
             }),
         )),
         "notifications/initialized" => None,
@@ -223,6 +224,24 @@ fn tool_result(text: &str, is_error: bool) -> Value {
         "isError": is_error,
     })
 }
+
+/// What a client should know before it calls a tool.
+///
+/// Sent in `initialize` so an agent gets the contract in the same handshake that gives it the
+/// tools, instead of inferring the document shape from an empty schema and going looking for a
+/// checkout. Every fact here is one that a caller who guessed wrong would not be told about: a
+/// mis-read status and a mis-derived number both land silently.
+const SERVER_INSTRUCTIONS: &str = "\
+Decisions are MADR documents. Read `adrian://docs/madr` before you write or import one; \
+`adrian://docs/api` is the route and tool reference.\n\
+Status comes from YAML front matter only, and only these six values are understood: \
+proposed, accepted, rejected, deprecated, superseded, withdrawn. A `- **Status:** Accepted` \
+bullet under the title is ignored, so the decision lands as proposed and the result carries a \
+status_bullet_ignored warning. Nothing becomes accepted except through adr_transition.\n\
+Recognised front matter keys are status, date, decision-makers (or deciders), consulted and \
+informed. Any other key is preserved verbatim but not interpreted.\n\
+The display number is the leading digits of `external_ref`, so `docs/adr/0042-use-x.md` is 42 \
+and `adr-007.md` has no number. Duplicate numbers are not reconciled; pick distinct refs.";
 
 /// The documents this server serves over `resources/read`.
 ///
@@ -347,11 +366,17 @@ fn tool_catalogue() -> Vec<Value> {
         }),
         json!({
             "name": "adr_submit",
-            "description": "Record a new architectural decision. It always lands as \
-                            `proposed`; a human accepts it later with `adr_transition`. \
-                            Status is read from YAML front matter only, so a document whose \
-                            status is a `- **Status:**` bullet is recorded as `proposed` and \
-                            the response carries a warning saying so.",
+            "description": "Record one new architectural decision from a MADR document. It \
+                            always lands as `proposed`; a human accepts it later with \
+                            `adr_transition`. Status is read from YAML front matter only, so a \
+                            document whose status is a `- **Status:**` bullet is recorded as \
+                            `proposed` and the response carries a `status_bullet_ignored` \
+                            warning naming the raw value. Recognised front matter keys are \
+                            `status`, `date`, `decision-makers` (or `deciders`), `consulted` \
+                            and `informed`; the status vocabulary is proposed, accepted, \
+                            rejected, deprecated, superseded, withdrawn. The display number is \
+                            the leading digits of `external_ref`. To migrate a whole directory \
+                            use `adr_import` instead of looping this.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -373,7 +398,19 @@ fn tool_catalogue() -> Vec<Value> {
                             set `preserve_status` only when the decisions were already \
                             accepted elsewhere, because that records the document's own \
                             status without a human transition. One bad document does not \
-                            abort the batch; it comes back as `failed` in the results.",
+                            abort the batch; it comes back as `failed` in the results.\n\n\
+                            The status contract decides whether a migration keeps its history. \
+                            Status is read from YAML front matter only, so a corpus that writes \
+                            `- **Status:** Accepted` as a bullet imports entirely as `proposed` \
+                            and each one then needs an `adr_transition`; the result carries a \
+                            `status_bullet_ignored` warning per document. Converting those \
+                            bullets to `---` front matter first, with `preserve_status: true`, \
+                            keeps the statuses. Recognised keys are `status`, `date`, \
+                            `decision-makers` (or `deciders`), `consulted` and `informed`, and \
+                            the status vocabulary is proposed, accepted, rejected, deprecated, \
+                            superseded, withdrawn. The display number is the leading digits of \
+                            `external_ref`, so `docs/adr/0042-use-x.md` is 42; duplicate \
+                            numbers are not reconciled, so check the refs before a bulk import.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -386,11 +423,11 @@ fn tool_catalogue() -> Vec<Value> {
                         "items": {
                             "type": "object",
                             "properties": {
-                                "external_ref": { "type": "string", "description": "Stable key, for example `docs/adr/0001-whitelabel.md`." },
-                                "source": { "type": "string", "description": "The MADR document as Markdown." },
-                                "source_format": { "type": "string" },
-                                "scopes": { "type": "array", "items": { "type": "string" } },
-                                "idempotency_key": { "type": "string" }
+                                "external_ref": { "type": "string", "description": "Stable key and the source of the display number, for example `docs/adr/0001-whitelabel.md` gives number 1. Refs without leading digits get no number." },
+                                "source": { "type": "string", "description": "The MADR document as Markdown, including any YAML front matter." },
+                                "source_format": { "type": "string", "description": "Format hint for the source. Defaults to MADR, which is what the parser expects." },
+                                "scopes": { "type": "array", "items": { "type": "string" }, "description": "Path prefixes this decision binds, so `adr_context_for` can find it later." },
+                                "idempotency_key": { "type": "string", "description": "Repeat the same key to make a retry a no-op instead of a revision." }
                             },
                             "required": ["external_ref", "source"]
                         }
@@ -1228,6 +1265,50 @@ mod tests {
             assert!(
                 tool.get("inputSchema").is_some(),
                 "tool is missing an input schema"
+            );
+        }
+    }
+
+    #[test]
+    fn the_instructions_point_at_the_documents_and_the_status_contract() {
+        // The handshake is the only place a client that never reads a checkout learns the shape
+        // of a document, so these three facts have to be in it.
+        assert!(SERVER_INSTRUCTIONS.contains("adrian://docs/madr"));
+        assert!(SERVER_INSTRUCTIONS.contains("front matter"));
+        assert!(SERVER_INSTRUCTIONS.contains("external_ref"));
+        for status in ["proposed", "accepted", "superseded", "withdrawn"] {
+            assert!(
+                SERVER_INSTRUCTIONS.contains(status),
+                "instructions omit the `{status}` status"
+            );
+        }
+    }
+
+    #[test]
+    fn the_ingest_descriptions_carry_the_contract_a_schema_cannot() {
+        // A caller who only sees the schema would write `- **Status:**` bullets and duplicate
+        // numbers, and both mistakes land silently. The descriptions are the last place to say so.
+        let tools = tool_catalogue();
+        for name in ["adr_submit", "adr_import"] {
+            let tool = tools
+                .iter()
+                .find(|tool| tool.get("name").and_then(|v| v.as_str()) == Some(name))
+                .expect("tool exists");
+            let description = tool
+                .get("description")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default();
+            assert!(
+                description.contains("front matter"),
+                "`{name}` does not say where status comes from"
+            );
+            assert!(
+                description.contains("external_ref"),
+                "`{name}` does not say where the number comes from"
+            );
+            assert!(
+                description.contains("withdrawn"),
+                "`{name}` does not enumerate the status vocabulary"
             );
         }
     }

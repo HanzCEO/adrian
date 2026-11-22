@@ -308,6 +308,14 @@ Methods: `initialize`, `notifications/initialized`, `ping`, `tools/list`, `tools
 `resources/list`, `resources/read`. Unknown methods return `-32601`, invalid params
 `-32602`.
 
+`initialize` returns an `instructions` string alongside the tool and resource capabilities.
+It names the two resource URIs and states the rules a schema cannot express: where status
+comes from, the closed status vocabulary, the recognised front matter keys and how the
+display number is derived from `external_ref`. A client that surfaces `instructions` in its
+prompt gets the contract in the same handshake that gives it the tools. A client that does
+not still gets the same facts from the `adr_submit` and `adr_import` descriptions, which is
+why those descriptions repeat them rather than pointing at this document.
+
 A tool-level failure is `isError: true` inside a successful response, which is the MCP
 convention; only protocol problems become JSON-RPC errors.
 
