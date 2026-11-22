@@ -27,7 +27,21 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .merge(rest::router())
         .route("/mcp", post(mcp::handle))
+        // An unknown path or a wrong method are failures too, and the contract says every
+        // failure uses the same body. axum's defaults are plain text.
+        .fallback(not_found)
+        .method_not_allowed_fallback(method_not_allowed)
         .layer(middleware::from_fn_with_state(auth_state, auth::require))
         .layer(DefaultBodyLimit::max(body_limit))
         .with_state(state)
+}
+
+async fn not_found(uri: axum::http::Uri) -> error::ApiError {
+    error::ApiError::not_found(format!("no route matches {}", uri.path()))
+}
+
+async fn method_not_allowed() -> error::ApiError {
+    error::ApiError::method_not_allowed(
+        "this method is not allowed on this path; see docs/API.md".to_string(),
+    )
 }

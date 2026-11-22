@@ -28,6 +28,7 @@ Every failure returns the same shape:
 | `unsupported_media_type` | 415 | The request was not sent as `application/json`. |
 | `internal` | 500 | Anything else. The message is still returned. |
 | `upstream_error` | 502 | The embedder or Qdrant failed. |
+| `method_not_allowed` | 405 | The path exists, but not for this method. |
 
 There are no other statuses. A missing required field is a 400 rather than a 422, and a body
 that cannot be read is a 413 or a 415, so a client only has to handle the codes above.
@@ -44,6 +45,10 @@ default, so a client that parses `{"error": {"code", "message"}}` can read every
 | `Content-Type: text/plain` | 415 | `unsupported_media_type` |
 | no `Content-Type` | 415 | `unsupported_media_type` |
 | body over `ADRIAN_MAX_BODY_BYTES` | 413 | `payload_too_large` |
+| `GET /v1/adrs?limit=abc` | 400 | `invalid_request` |
+| `GET /v1/context?limit=xyz` | 400 | `invalid_request` |
+| `GET /v1/search` (it is POST only) | 405 | `method_not_allowed` |
+| `GET /v1/nope` | 404 | `not_found` |
 
 ---
 

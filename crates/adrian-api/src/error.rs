@@ -34,6 +34,10 @@ pub enum ApiError {
     #[error("{message}")]
     PayloadTooLarge { message: String },
 
+    /// The path exists but not for this method.
+    #[error("{message}")]
+    MethodNotAllowed { message: String },
+
     /// A dependency (embedder, Qdrant) failed or is unreachable.
     #[error("{message}")]
     Upstream { message: String },
@@ -93,6 +97,12 @@ impl ApiError {
         }
     }
 
+    pub fn method_not_allowed(message: impl Into<String>) -> Self {
+        ApiError::MethodNotAllowed {
+            message: message.into(),
+        }
+    }
+
     pub fn unauthorized(message: impl Into<String>) -> Self {
         ApiError::Unauthorized {
             message: message.into(),
@@ -113,6 +123,7 @@ impl ApiError {
             ApiError::Conflict { .. } => "conflict",
             ApiError::UnsupportedMediaType { .. } => "unsupported_media_type",
             ApiError::PayloadTooLarge { .. } => "payload_too_large",
+            ApiError::MethodNotAllowed { .. } => "method_not_allowed",
             ApiError::Upstream { .. } => "upstream_error",
             ApiError::Unauthorized { .. } => "unauthorized",
             ApiError::Internal { .. } => "internal",
@@ -126,6 +137,7 @@ impl ApiError {
             ApiError::Conflict { .. } => StatusCode::CONFLICT,
             ApiError::UnsupportedMediaType { .. } => StatusCode::UNSUPPORTED_MEDIA_TYPE,
             ApiError::PayloadTooLarge { .. } => StatusCode::PAYLOAD_TOO_LARGE,
+            ApiError::MethodNotAllowed { .. } => StatusCode::METHOD_NOT_ALLOWED,
             ApiError::Upstream { .. } => StatusCode::BAD_GATEWAY,
             ApiError::Unauthorized { .. } => StatusCode::UNAUTHORIZED,
             ApiError::Internal { .. } => StatusCode::INTERNAL_SERVER_ERROR,

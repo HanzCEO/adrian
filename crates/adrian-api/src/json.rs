@@ -1,8 +1,9 @@
-//! A JSON body extractor that fails in the documented shape.
+//! Extractors that fail in the documented shape.
 //!
-//! `axum::Json` answers a bad request with its own plain-text rejection body, which would
-//! mean a client that only knows how to parse `{"error": {"code", "message"}}` cannot read
-//! the reason. Every rejection it can produce is therefore mapped onto [`ApiError`]:
+//! `axum::Json` and `axum::Query` answer a bad request with their own plain-text rejection
+//! body, which would mean a client that only knows how to parse
+//! `{"error": {"code", "message"}}` cannot read the reason. Every rejection they can produce
+//! is therefore mapped onto [`ApiError`]:
 //!
 //! | Cause | Status | `code` |
 //! | --- | --- | --- |
@@ -10,14 +11,16 @@
 //! | body is valid JSON but the wrong shape, or a required field is missing | 400 | `invalid_request` |
 //! | `Content-Type` is not `application/json` | 415 | `unsupported_media_type` |
 //! | body exceeds the configured limit | 413 | `payload_too_large` |
+//! | query string does not deserialize (e.g. `?limit=abc`) | 400 | `invalid_request` |
 //!
 //! A missing required field is reported as 400 rather than 422 on purpose: the contract
 //! documents 400/401/404/409/413/415/500/502 and nothing else, so a 422 would be a status a
 //! client has no rule for.
 
 use crate::error::ApiError;
-use axum::extract::rejection::JsonRejection;
-use axum::extract::{FromRequest, Request};
+use axum::extract::rejection::{JsonRejection, QueryRejection};
+use axum::extract::{FromRequest, FromRequestParts, Request};
+use axum::http::request::Parts;
 use axum::Json;
 use serde::de::DeserializeOwned;
 
@@ -36,6 +39,37 @@ where
             Ok(Json(value)) => Ok(ApiJson(value)),
             Err(rejection) => Err(map_rejection(rejection)),
         }
+    }
+}
+
+/// A query-string extractor whose failures are rendered as [`ApiError`].
+///
+/// `?limit=abc` is a client mistake, not a server fault, so it must arrive as the same JSON
+/// body as every other 400 rather than as axum's plain-text `Failed to deserialize query
+/// string`.
+pub struct ApiQuery<T>(pub T);
+
+impl<T, S> FromRequestParts<S> for ApiQuery<T>
+where
+    T: DeserializeOwned,
+    S: Send + Sync,
+{
+    type Rejection = ApiError;
+
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        match axum::extract::Query::<T>::from_request_parts(parts, state).await {
+            Ok(axum::extract::Query(value)) => Ok(ApiQuery(value)),
+            Err(rejection) => Err(map_query_rejection(rejection)),
+        }
+    }
+}
+
+fn map_query_rejection(rejection: QueryRejection) -> ApiError {
+    match rejection {
+        QueryRejection::FailedToDeserializeQueryString(err) => ApiError::invalid(format!(
+            "the query string does not match the expected parameters: {err}"
+        )),
+        other => ApiError::invalid(other.body_text()),
     }
 }
 
@@ -130,5 +164,36 @@ mod tests {
             .await
             .expect_err("must reject");
         assert_eq!(err.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct Params {
+        #[allow(dead_code)]
+        limit: i64,
+    }
+
+    async fn extract_query(uri: &'static str) -> Result<Params, ApiError> {
+        let request = Request::builder()
+            .uri(uri)
+            .body(Body::empty())
+            .expect("request");
+        let (mut parts, _) = request.into_parts();
+        ApiQuery::<Params>::from_request_parts(&mut parts, &())
+            .await
+            .map(|ApiQuery(params)| params)
+    }
+
+    #[tokio::test]
+    async fn a_valid_query_string_is_accepted() {
+        let params = extract_query("/?limit=10").await.expect("valid");
+        assert_eq!(params.limit, 10);
+    }
+
+    #[tokio::test]
+    async fn a_malformed_query_string_is_a_400_in_the_documented_shape() {
+        // `?limit=abc` used to reach the client as axum's plain-text rejection.
+        let err = extract_query("/?limit=abc").await.expect_err("must reject");
+        assert_eq!(err.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(err.code(), "invalid_request");
     }
 }

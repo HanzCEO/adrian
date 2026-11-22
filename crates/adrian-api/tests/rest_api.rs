@@ -155,6 +155,55 @@ async fn extractor_failures_use_the_documented_error_shape() {
     );
 }
 
+/// The query string is an extractor too. `?limit=abc` used to reach the client as axum's
+/// plain-text `Failed to deserialize query string`, which is the same defect as an
+/// unwrapped JSON body and must fail the same way.
+#[tokio::test]
+async fn malformed_query_strings_use_the_documented_error_shape() {
+    let harness = Harness::new(None).await;
+    harness.create_project("demo").await;
+
+    for uri in [
+        "/v1/adrs?project=demo&limit=abc",
+        "/v1/adrs?project=demo&offset=notanumber",
+        "/v1/context?path=crates/api&limit=xyz",
+    ] {
+        let (status, body) = harness.send("GET", uri, None, None).await;
+        assert_eq!(status, 400, "{uri} should be a 400, body: {body}");
+        assert_eq!(
+            body["error"]["code"], "invalid_request",
+            "{uri} must use the documented error shape, got {body}"
+        );
+        assert!(
+            body["error"]["message"].is_string(),
+            "{uri} must carry a message, got {body}"
+        );
+    }
+
+    // A well-formed query still works, so the wrapping is not over-eager.
+    let (status, body) = harness
+        .send("GET", "/v1/adrs?project=demo&limit=5", None, None)
+        .await;
+    assert_eq!(status, 200, "a valid query must not be rejected: {body}");
+}
+
+/// A wrong method or an unknown path are failures too, and axum's defaults for both are
+/// plain text.
+#[tokio::test]
+async fn routing_failures_use_the_documented_error_shape() {
+    let harness = Harness::new(None).await;
+
+    let (status, body) = harness.send("GET", "/v1/search", None, None).await;
+    assert_eq!(status, 405, "search is POST only, body: {body}");
+    assert_eq!(body["error"]["code"], "method_not_allowed");
+    assert!(body["error"]["message"].is_string());
+
+    let (status, body) = harness.send("GET", "/v1/nope", None, None).await;
+    assert_eq!(status, 404, "body: {body}");
+    assert_eq!(body["error"]["code"], "not_found");
+    assert!(body["error"]["message"].is_string());
+}
+
 #[tokio::test]
 async fn bearer_auth_is_enforced_when_configured() {
     let harness = Harness::new(Some("secret")).await;

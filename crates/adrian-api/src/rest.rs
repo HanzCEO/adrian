@@ -5,13 +5,13 @@
 
 use crate::dto::*;
 use crate::error::{ApiError, ApiResult};
-use crate::json::ApiJson;
+use crate::json::{ApiJson, ApiQuery};
 use crate::state::AppState;
 use adrian_core::chunker::WhitespaceTokenCounter;
 use adrian_core::export::{self, ExportFormat};
 use adrian_core::ingest::{ingest, IngestRequest};
 use adrian_core::types::*;
-use axum::extract::{Path, Query, State};
+use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -46,6 +46,7 @@ pub fn router() -> Router<AppState> {
 // Health
 // ---------------------------------------------------------------------------
 
+#[tracing::instrument(name = "healthz", skip(state))]
 pub async fn healthz(State(state): State<AppState>) -> Json<HealthResponse> {
     let embedder = match state.embedder.models().await {
         Ok(info) => DependencyHealth {
@@ -90,6 +91,7 @@ pub async fn healthz(State(state): State<AppState>) -> Json<HealthResponse> {
     })
 }
 
+#[tracing::instrument(name = "models", skip(state))]
 pub async fn models(State(state): State<AppState>) -> ApiResult<Json<ModelsResponse>> {
     let model = state.embedder.models().await?;
     Ok(Json(ModelsResponse {
@@ -102,6 +104,7 @@ pub async fn models(State(state): State<AppState>) -> ApiResult<Json<ModelsRespo
 // Projects
 // ---------------------------------------------------------------------------
 
+#[tracing::instrument(name = "create_project", skip(state, request))]
 pub async fn create_project(
     State(state): State<AppState>,
     ApiJson(request): ApiJson<CreateProjectRequest>,
@@ -145,6 +148,7 @@ pub async fn create_project(
     Ok((StatusCode::CREATED, Json(project_view(&project))))
 }
 
+#[tracing::instrument(name = "list_projects", skip(state))]
 pub async fn list_projects(State(state): State<AppState>) -> ApiResult<Json<Vec<ProjectListItem>>> {
     let projects = state.store.list_projects().await?;
     Ok(Json(
@@ -164,6 +168,7 @@ pub async fn list_projects(State(state): State<AppState>) -> ApiResult<Json<Vec<
 // ADRs
 // ---------------------------------------------------------------------------
 
+#[tracing::instrument(name = "create_adr", skip(state, request))]
 pub async fn create_adr(
     State(state): State<AppState>,
     headers: axum::http::HeaderMap,
@@ -300,9 +305,10 @@ fn normalize_declared_scope(value: &str) -> Option<Scope> {
     })
 }
 
+#[tracing::instrument(name = "list_adrs", skip(state, query))]
 pub async fn list_adrs(
     State(state): State<AppState>,
-    Query(query): Query<ListQuery>,
+    ApiQuery(query): ApiQuery<ListQuery>,
 ) -> ApiResult<Json<Vec<AdrSummary>>> {
     let project = match &query.project {
         Some(slug) => state
@@ -351,10 +357,11 @@ pub async fn list_adrs(
     Ok(Json(out))
 }
 
+#[tracing::instrument(name = "get_adr", skip(state))]
 pub async fn get_adr(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    Query(query): Query<DetailQuery>,
+    ApiQuery(query): ApiQuery<DetailQuery>,
 ) -> ApiResult<Json<AdrDetail>> {
     let adr_id = parse_uuid(&id)?;
     let adr = state.store.get_adr(adr_id).await?;
@@ -441,6 +448,7 @@ pub async fn get_adr(
     }))
 }
 
+#[tracing::instrument(name = "get_adr_chunks", skip(state))]
 pub async fn get_adr_chunks(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -471,6 +479,7 @@ pub async fn get_adr_chunks(
     Ok(Json(out))
 }
 
+#[tracing::instrument(name = "transition", skip(state, request))]
 pub async fn transition(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -497,6 +506,7 @@ pub async fn transition(
 // Retrieval
 // ---------------------------------------------------------------------------
 
+#[tracing::instrument(name = "search", skip(state, request))]
 pub async fn search(
     State(state): State<AppState>,
     ApiJson(request): ApiJson<SearchRequest>,
@@ -644,10 +654,11 @@ pub fn reciprocal_rank_fusion(lists: Vec<Vec<ScoredChunk>>) -> Vec<(Uuid, Uuid, 
     out
 }
 
+#[tracing::instrument(name = "similar", skip(state, query))]
 pub async fn similar(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    Query(query): Query<SimilarQuery>,
+    ApiQuery(query): ApiQuery<SimilarQuery>,
 ) -> ApiResult<Json<SearchResponse>> {
     let adr_id = parse_uuid(&id)?;
     let adr = state.store.get_adr(adr_id).await?;
@@ -673,9 +684,10 @@ pub async fn similar(
     }))
 }
 
+#[tracing::instrument(name = "context", skip(state, query))]
 pub async fn context(
     State(state): State<AppState>,
-    Query(query): Query<ContextQuery>,
+    ApiQuery(query): ApiQuery<ContextQuery>,
 ) -> ApiResult<Json<ContextResponse>> {
     if query.path.trim().is_empty() {
         return Err(ApiError::invalid("`path` must not be empty"));
@@ -732,6 +744,7 @@ pub async fn context(
 // Export
 // ---------------------------------------------------------------------------
 
+#[tracing::instrument(name = "export_decisions", skip(state, request))]
 pub async fn export_decisions(
     State(state): State<AppState>,
     ApiJson(request): ApiJson<ExportRequest>,
