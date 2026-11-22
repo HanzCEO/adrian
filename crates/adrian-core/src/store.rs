@@ -1889,29 +1889,75 @@ mod tests {
             "duplicate chunk must abort the transaction"
         );
 
-        let (adrs, revs, sections, chunks, jobs): (i64, i64, i64, i64, i64) = store
+        // Every table the revision touches must be empty again. A partial write would leave
+        // an ADR with no sections, or sections with no chunks, and nothing would ever
+        // repair it.
+        let (adrs, revs, sections, items, chunks, vectors, jobs): (
+            i64,
+            i64,
+            i64,
+            i64,
+            i64,
+            i64,
+            i64,
+        ) = store
             .read(|conn| {
                 Ok((
                     conn.query_row("SELECT COUNT(*) FROM adr", [], |r| r.get(0))?,
                     conn.query_row("SELECT COUNT(*) FROM adr_rev", [], |r| r.get(0))?,
                     conn.query_row("SELECT COUNT(*) FROM section", [], |r| r.get(0))?,
+                    conn.query_row("SELECT COUNT(*) FROM item", [], |r| r.get(0))?,
                     conn.query_row("SELECT COUNT(*) FROM chunk", [], |r| r.get(0))?,
+                    conn.query_row("SELECT COUNT(*) FROM chunk_vector", [], |r| r.get(0))?,
                     conn.query_row("SELECT COUNT(*) FROM embed_job", [], |r| r.get(0))?,
                 ))
             })
             .await
             .unwrap();
-        assert_eq!((adrs, revs, sections, chunks, jobs), (0, 0, 0, 0, 0));
+        assert_eq!(
+            (adrs, revs, sections, items, chunks, vectors, jobs),
+            (0, 0, 0, 0, 0, 0, 0),
+            "a failed revision must leave no rows behind in any table"
+        );
+
+        // The same revision, without the duplicate, still succeeds afterwards: the failed
+        // transaction must not have poisoned the connection.
+        let adr_id = Uuid::now_v7();
+        let clean = sample_revision(&project, adr_id, "text");
+        store
+            .insert_adr_with_revision(clean)
+            .await
+            .expect("a valid revision after a rolled back one");
+        let adrs: i64 = store
+            .read(|conn| Ok(conn.query_row("SELECT COUNT(*) FROM adr", [], |r| r.get(0))?))
+            .await
+            .unwrap();
+        assert_eq!(adrs, 1);
     }
 
     #[tokio::test]
     async fn fts_index_tracks_inserts() {
         let (store, project, adr_id) = seeded().await;
+
+        // The FTS row must resolve back to the exact chunk that carries the text, not just
+        // to the right ADR: search hydrates chunk text by chunk_id, so a wrong id would
+        // return the wrong paragraph.
+        let expected: Vec<Uuid> = store
+            .list_chunks(adr_id, 1)
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|chunk| chunk.kind == ChunkKind::Document)
+            .map(|chunk| chunk.id)
+            .collect();
+        assert_eq!(expected.len(), 1, "the seed should have one document chunk");
+
         let hits = store
             .search_lexical(project.id, "tokio runtime".to_string(), 10)
             .await
             .unwrap();
         assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].chunk_id, expected[0], "wrong chunk_id from FTS");
         assert_eq!(hits[0].adr_id, adr_id);
 
         let misses = store
@@ -1919,6 +1965,38 @@ mod tests {
             .await
             .unwrap();
         assert!(misses.is_empty());
+
+        // And the index follows later inserts, so it is a live index rather than a snapshot
+        // taken once at migration time.
+        let second_id = Uuid::now_v7();
+        let mut second = sample_revision(&project, second_id, "kubernetes manifests");
+        second.external_ref = "docs/adr/0002-use-kubernetes.md".to_string();
+        second.slug = "use-kubernetes".to_string();
+        second.number = Some(2);
+        // A second ADR needs its own row ids; the sample reuses fixed ones.
+        second.sections[0].id = Uuid::now_v7();
+        second.chunks.truncate(1);
+        for (index, chunk) in second.chunks.iter_mut().enumerate() {
+            chunk.id = Uuid::now_v7();
+            chunk.ordinal = index;
+            chunk.section_id = Some(second.sections[0].id);
+        }
+        store.insert_adr_with_revision(second).await.unwrap();
+
+        let after = store
+            .search_lexical(project.id, "kubernetes".to_string(), 10)
+            .await
+            .unwrap();
+        assert_eq!(after.len(), 1, "the newly inserted chunk should be found");
+        assert_eq!(after[0].adr_id, second_id);
+
+        // The first document is still findable, so the insert did not clobber the index.
+        let still_there = store
+            .search_lexical(project.id, "tokio runtime".to_string(), 10)
+            .await
+            .unwrap();
+        assert_eq!(still_there.len(), 1);
+        assert_eq!(still_there[0].chunk_id, expected[0]);
     }
 
     #[tokio::test]
@@ -1947,6 +2025,75 @@ mod tests {
         assert!(
             second.is_empty(),
             "a claimed job must not be handed out twice"
+        );
+    }
+
+    #[tokio::test]
+    async fn concurrent_claimers_never_receive_the_same_job() {
+        // The real contention case: several workers polling the same file database. Claiming
+        // is `UPDATE ... RETURNING` inside a write transaction, so it has to serialize rather
+        // than hand the same row to two callers.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("claim.db");
+
+        let setup = Store::open(&path).expect("open");
+        setup.migrate().await.expect("migrate");
+        let workspace_id = setup.ensure_default_workspace().await.unwrap();
+        let mut project = sample_project();
+        project.workspace_id = workspace_id;
+        setup.create_project(project.clone()).await.unwrap();
+
+        // Enough jobs that every claimer can win one if claiming is broken.
+        const REVISIONS: usize = 8;
+        for index in 0..REVISIONS {
+            let adr_id = Uuid::now_v7();
+            let mut revision = sample_revision(&project, adr_id, "text");
+            revision.external_ref = format!("docs/adr/{index:04}.md");
+            revision.slug = format!("adr-{index}");
+            revision.number = Some(index as i64);
+            revision.sections[0].id = Uuid::now_v7();
+            for (ordinal, chunk) in revision.chunks.iter_mut().enumerate() {
+                chunk.id = Uuid::now_v7();
+                chunk.ordinal = ordinal;
+                chunk.section_id = Some(revision.sections[0].id);
+            }
+            setup.insert_adr_with_revision(revision).await.unwrap();
+        }
+
+        const CLAIMERS: usize = 8;
+        let mut handles = Vec::with_capacity(CLAIMERS);
+        for _ in 0..CLAIMERS {
+            let path = path.clone();
+            handles.push(tokio::task::spawn_blocking(move || {
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("runtime");
+                runtime.block_on(async move {
+                    let store = Store::open(&path).expect("open");
+                    store.claim_embed_jobs(2).await.expect("claim")
+                })
+            }));
+        }
+
+        let mut claimed: Vec<i64> = Vec::new();
+        for handle in handles {
+            for job in handle.await.expect("join") {
+                claimed.push(job.id);
+            }
+        }
+
+        let total = claimed.len();
+        claimed.sort();
+        claimed.dedup();
+        assert_eq!(
+            total,
+            claimed.len(),
+            "two concurrent callers were handed the same job"
+        );
+        assert_eq!(
+            total, REVISIONS,
+            "every pending job should be claimed exactly once"
         );
     }
 

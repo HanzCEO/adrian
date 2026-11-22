@@ -322,10 +322,15 @@ pub struct DetailQuery {
 // Conversion helpers
 // ---------------------------------------------------------------------------
 
+/// Format a Unix timestamp as RFC 3339.
+///
+/// An out-of-range timestamp is reported as the epoch rather than panicking: this is a
+/// presentation helper on a request path, so a bad value must not take the server down.
 pub fn rfc3339(seconds: i64) -> String {
-    chrono::DateTime::from_timestamp(seconds, 0)
-        .unwrap_or_else(|| chrono::DateTime::from_timestamp(0, 0).expect("epoch is valid"))
-        .to_rfc3339()
+    match chrono::DateTime::from_timestamp(seconds, 0) {
+        Some(datetime) => datetime.to_rfc3339(),
+        None => "1970-01-01T00:00:00+00:00".to_string(),
+    }
 }
 
 pub fn project_view(project: &Project) -> ProjectResponse {
