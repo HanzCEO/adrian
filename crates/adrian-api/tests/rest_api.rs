@@ -554,3 +554,178 @@ async fn similar_excludes_the_decision_itself() {
         "the anchor decision must not appear in its own similar list"
     );
 }
+
+#[tokio::test]
+async fn delete_project_reports_the_footprint_and_removes_it() {
+    let harness = Harness::new(None).await;
+    harness.create_project("demo").await;
+    let (status, body) = harness.create_adr("demo", SAMPLE_ADR).await;
+    assert_eq!(status, 201, "body: {body}");
+
+    let (status, body) = harness
+        .send("DELETE", "/v1/projects/demo", None, None)
+        .await;
+    assert_eq!(status, 200, "body: {body}");
+    assert_eq!(body["deleted"], true);
+    assert_eq!(body["slug"], "demo");
+    assert_eq!(body["footprint"]["adrs"], 1);
+    assert!(body["footprint"]["chunks"].as_i64().unwrap_or(0) > 0);
+
+    let (status, body) = harness.send("GET", "/v1/projects", None, None).await;
+    assert_eq!(status, 200);
+    assert!(
+        body.as_array().expect("projects").is_empty(),
+        "the project must be gone, got {body}"
+    );
+
+    // A second delete is a 404, not a silent success.
+    let (status, body) = harness
+        .send("DELETE", "/v1/projects/demo", None, None)
+        .await;
+    assert_eq!(status, 404);
+    assert_eq!(body["error"]["code"], "not_found");
+}
+
+#[tokio::test]
+async fn delete_adr_removes_the_decision() {
+    let harness = Harness::new(None).await;
+    harness.create_project("demo").await;
+    let (_, body) = harness.create_adr("demo", SAMPLE_ADR).await;
+    let id = body["id"].as_str().expect("id");
+
+    let (status, body) = harness
+        .send("DELETE", &format!("/v1/adrs/{id}"), None, None)
+        .await;
+    assert_eq!(status, 200, "body: {body}");
+    assert_eq!(body["deleted"], true);
+    assert_eq!(body["id"], id);
+    assert_eq!(body["external_ref"], "docs/adr/0001-test.md");
+    assert!(body["footprint"]["chunks"].as_i64().unwrap_or(0) > 0);
+
+    let (status, _) = harness
+        .send("GET", &format!("/v1/adrs/{id}"), None, None)
+        .await;
+    assert_eq!(status, 404);
+}
+
+#[tokio::test]
+async fn delete_adr_on_a_malformed_id_is_a_400() {
+    let harness = Harness::new(None).await;
+    let (status, body) = harness
+        .send("DELETE", "/v1/adrs/not-a-uuid", None, None)
+        .await;
+    assert_eq!(status, 400);
+    assert_eq!(body["error"]["code"], "invalid_request");
+}
+
+#[tokio::test]
+async fn batch_import_lands_each_document_and_isolates_a_failure() {
+    let harness = Harness::new(None).await;
+    harness.create_project("demo").await;
+
+    let (status, body) = harness
+        .send(
+            "POST",
+            "/v1/adrs/batch",
+            Some(json!({
+                "project": "demo",
+                "actor": "human:hanz",
+                "documents": [
+                    { "external_ref": "docs/adr/0001.md", "source": SAMPLE_ADR },
+                    { "external_ref": "docs/adr/0002.md", "source": SAMPLE_ADR.replace("tokio", "axum") },
+                    { "external_ref": "docs/adr/0003.md", "source": "" }
+                ]
+            })),
+            None,
+        )
+        .await;
+    assert_eq!(status, 201, "body: {body}");
+    assert_eq!(body["created"], 2);
+    assert_eq!(body["failed"], 1);
+    let results = body["results"].as_array().expect("results");
+    assert_eq!(results.len(), 3);
+    assert_eq!(results[2]["action"], "failed");
+    assert!(results[2]["error"].as_str().is_some());
+
+    // Default: an import cannot accept its own decision.
+    assert_eq!(results[0]["status"], "proposed");
+    assert_eq!(results[1]["status"], "proposed");
+}
+
+#[tokio::test]
+async fn batch_import_preserves_status_when_the_operator_asks() {
+    let harness = Harness::new(None).await;
+    harness.create_project("demo").await;
+
+    let (status, body) = harness
+        .send(
+            "POST",
+            "/v1/adrs/batch",
+            Some(json!({
+                "project": "demo",
+                "actor": "human:hanz",
+                "preserve_status": true,
+                "documents": [{ "external_ref": "docs/adr/0001.md", "source": SAMPLE_ADR }]
+            })),
+            None,
+        )
+        .await;
+    assert_eq!(status, 201, "body: {body}");
+    assert_eq!(body["results"][0]["status"], "accepted");
+}
+
+#[tokio::test]
+async fn batch_import_requires_at_least_one_document() {
+    let harness = Harness::new(None).await;
+    harness.create_project("demo").await;
+    let (status, body) = harness
+        .send(
+            "POST",
+            "/v1/adrs/batch",
+            Some(json!({ "project": "demo", "documents": [] })),
+            None,
+        )
+        .await;
+    assert_eq!(status, 400);
+    assert_eq!(body["error"]["code"], "invalid_request");
+}
+
+#[tokio::test]
+async fn a_status_bullet_produces_a_warning_on_the_single_submit_path() {
+    let harness = Harness::new(None).await;
+    harness.create_project("demo").await;
+
+    let source = "# Bullet status\n\n- **Status:** Accepted\n\n## Context and Problem Statement\n\nSomething.\n\n## Decision Outcome\n\nWe decided.\n";
+    let (status, body) = harness.create_adr("demo", source).await;
+    assert_eq!(status, 201, "body: {body}");
+    assert_eq!(body["status"], "proposed");
+    let warnings = body["warnings"].as_array().expect("warnings");
+    assert!(
+        warnings
+            .iter()
+            .any(|warning| warning["kind"] == "status_bullet_ignored"),
+        "got {warnings:?}"
+    );
+}
+
+#[tokio::test]
+async fn delete_project_accepts_a_slug_with_a_slash() {
+    // Project slugs may contain `/`, and the docs example is `acme/billing`. The delete
+    // route captures the rest of the path so that slug is addressable.
+    let harness = Harness::new(None).await;
+    let (status, body) = harness
+        .send(
+            "POST",
+            "/v1/projects",
+            Some(json!({ "slug": "acme/billing", "name": "Billing" })),
+            None,
+        )
+        .await;
+    assert_eq!(status, 201, "body: {body}");
+
+    let (status, body) = harness
+        .send("DELETE", "/v1/projects/acme/billing", None, None)
+        .await;
+    assert_eq!(status, 200, "body: {body}");
+    assert_eq!(body["slug"], "acme/billing");
+}

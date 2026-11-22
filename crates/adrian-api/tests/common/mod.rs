@@ -116,6 +116,10 @@ async fn stub_upsert() -> axum::Json<Value> {
     axum::Json(json!({ "result": { "status": "completed" } }))
 }
 
+async fn stub_delete() -> axum::Json<Value> {
+    axum::Json(json!({ "result": { "status": "completed" } }))
+}
+
 pub struct Harness {
     pub state: AppState,
     pub router: Router,
@@ -155,6 +159,10 @@ impl Harness {
             .route(
                 "/collections/{name}/points",
                 axum::routing::put(stub_upsert),
+            )
+            .route(
+                "/collections/{name}/points/delete",
+                axum::routing::post(stub_delete),
             )
             .route("/readyz", axum::routing::get(stub_readyz))
             .with_state(stubs.clone());

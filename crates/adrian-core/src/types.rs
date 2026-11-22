@@ -439,6 +439,12 @@ pub enum ParseWarning {
     InvalidFrontMatter { message: String },
     /// The front matter status is not in Adrian's closed vocabulary.
     UnknownStatus { raw: String },
+    /// The document writes its status as a `- **Status:** ...` bullet in the body.
+    ///
+    /// Adrian reads status from YAML front matter only, so that bullet is ignored and the
+    /// decision lands as `proposed`. Reported so the caller is never surprised by a status
+    /// that changed under it.
+    StatusBulletIgnored { raw: String },
     /// An option appears in "Considered Options" with no matching H3 under pros and cons.
     UnmatchedOption { option: String },
     /// An H3 under pros and cons matches no entry in "Considered Options".

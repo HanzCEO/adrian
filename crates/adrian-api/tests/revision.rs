@@ -42,6 +42,10 @@ async fn changed_bytes_create_a_revision_and_close_the_previous_one() {
     assert_eq!(second["action"], "revised");
     assert_eq!(second["rev"], 2);
     assert_eq!(second["id"], id, "a revision keeps the decision's identity");
+    assert_eq!(
+        second["status"], "accepted",
+        "a revision keeps its status, so the response must report the status it kept"
+    );
 
     // The old revision is closed but still readable, which is the whole point of the
     // append-only model.

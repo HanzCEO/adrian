@@ -91,6 +91,56 @@ What the embedding engine is serving, plus the collection in use.
 [ { "id": "...", "slug": "acme/billing", "name": "Billing", "adr_count": 42 } ]
 ```
 
+### `DELETE /v1/projects/{slug}`
+
+Deletes the project and every decision, revision, chunk and vector that belongs to it. The
+vector index is cleared first, so a failed delete leaves the records in place rather than a
+search that returns decisions which no longer exist.
+
+`200` with the footprint that was removed.
+
+```json
+{ "deleted": true, "slug": "acme/billing",
+  "footprint": { "adrs": 42, "revisions": 47, "chunks": 310, "vectors": 310, "embed_jobs": 0 } }
+```
+
+`404` if the slug does not exist.
+
+### `POST /v1/adrs/batch`
+
+Ingests many documents in one call. Use it to bootstrap a corpus instead of looping
+`POST /v1/adrs`.
+
+```json
+{
+  "project": "acme/billing",
+  "actor": "human:hanz",
+  "preserve_status": true,
+  "documents": [
+    { "external_ref": "docs/adr/0001-use-tokio.md", "source": "...", "scopes": ["crates/runtime"] },
+    { "external_ref": "docs/adr/0002-postgres.md", "source": "..." }
+  ]
+}
+```
+
+`preserve_status` defaults to `false`, so each document lands `proposed` and a human must
+accept it. Set it to `true` only when migrating decisions that were already accepted
+elsewhere, because that records the document's own front matter without a transition.
+
+`201` with a per-document result. One bad document does not abort the batch.
+
+```json
+{ "project": "acme/billing", "created": 2, "revised": 0, "unchanged": 0, "failed": 1,
+  "results": [
+    { "external_ref": "docs/adr/0001-use-tokio.md", "action": "created", "id": "...",
+      "rev": 1, "status": "accepted", "warnings": [] },
+    { "external_ref": "docs/adr/0003-broken.md", "action": "failed", "error": "`source` must not be empty" }
+  ] }
+```
+
+`action` is `created`, `revised`, `unchanged` or `failed`. A document that fails validation
+comes back as `failed` with its reason rather than as an HTTP error.
+
 ### `POST /v1/adrs`
 
 ```json
@@ -164,6 +214,18 @@ and item with byte spans, scopes, technologies, chunks and the full status histo
 ### `GET /v1/adrs/{id}/chunks`
 
 The chunks and whether each has a vector yet. Useful for polling after an ingest.
+
+### `DELETE /v1/adrs/{id}`
+
+Deletes one decision and everything that belongs to it, including its vector points.
+Irreversible. `200` with the footprint that was removed.
+
+```json
+{ "deleted": true, "id": "...", "external_ref": "docs/adr/0042-use-tokio.md",
+  "footprint": { "revisions": 1, "chunks": 9, "vectors": 9, "embed_jobs": 0 } }
+```
+
+A malformed id is `400`. An unknown id is `404`.
 
 ### `POST /v1/adrs/{id}/transition`
 
@@ -242,8 +304,9 @@ assertion for that covers every fixture in the corpus, field by field, rather th
 in order. `Accept: application/json, text/event-stream` is tolerated; the server always
 answers with JSON.
 
-Methods: `initialize`, `notifications/initialized`, `ping`, `tools/list`, `tools/call`.
-Unknown methods return `-32601`, invalid params `-32602`.
+Methods: `initialize`, `notifications/initialized`, `ping`, `tools/list`, `tools/call`,
+`resources/list`, `resources/read`. Unknown methods return `-32601`, invalid params
+`-32602`.
 
 A tool-level failure is `isError: true` inside a successful response, which is the MCP
 convention; only protocol problems become JSON-RPC errors.
@@ -260,10 +323,14 @@ curl -s localhost:38922/mcp -H 'content-type: application/json' -d '{
 | Tool | Arguments | Use it when |
 | --- | --- | --- |
 | `project_list` | `limit?` | You need the project slugs, or another tool said `project` is required. |
+| `project_create` | `slug`, `name`, `repo_url?` | The instance is fresh and `adr_submit` failed with `no project exists yet`. |
+| `project_delete` | `slug` | You are removing a probe project or one created by mistake. |
 | `adr_search` | `query`, `project?`, `status?`, `limit?` | You know what you are looking for, in words. |
 | `adr_get` | `id`, or `project` + `number` | You have a decision and need its detail, including its chunks and whether each one is embedded. |
 | `adr_list` | `project?`, `status?`, `limit?` | You want an overview, not a search. |
 | `adr_submit` | `project`, `external_ref`, `source`, `actor`, `scopes?`, `idempotency_key?` | You are recording a new decision. |
+| `adr_import` | `project`, `actor`, `documents[]`, `preserve_status?` | You are migrating a directory of ADRs and want one call instead of one per file. |
+| `adr_delete` | `id` | You are removing a probe or a decision submitted by mistake. |
 | `adr_similar` | `id`, `limit?` | You want to know whether this has been decided before. |
 | `adr_transition` | `id`, `to`, `actor`, `reason?` | You are changing a decision's status. |
 | `adr_context_for` | `path`, `project?`, `limit?` | You are about to change code. |
@@ -271,10 +338,39 @@ curl -s localhost:38922/mcp -H 'content-type: application/json' -d '{
 `adr_get` returns the decision's chunks with the same fields `GET /v1/adrs/{id}` uses, so a
 caller can see that a document was chunked and whether the embed worker has caught up yet.
 
+### Resources
+
+`resources/list` advertises two documents and `resources/read` serves them. They are
+embedded in the binary, so a client that only has the container can read the contract
+without a checkout.
+
+| URI | Contents |
+| --- | --- |
+| `adrian://docs/api` | This document. |
+| `adrian://docs/madr` | The MADR support table and the status rules. |
+
+Read `adrian://docs/madr` before importing a corpus. It says which parts of a document the
+parser reads and which it ignores.
+
+### Bulk import and the status contract
+
+`adr_import` ingests an array of documents. Each item needs `external_ref` and `source`, and
+may carry `scopes`, `source_format` and `idempotency_key`. One bad document is reported as
+`failed` in the results and does not abort the rest.
+
+`preserve_status` defaults to `false`, so an import lands every decision as `proposed`,
+exactly like `adr_submit`. Set it to `true` only when the decisions were already accepted
+elsewhere and the corpus is being migrated. That path records each document's own front
+matter status without a human transition, which is why it is opt-in.
+
+Status is read from YAML front matter only. A document that writes `- **Status:** Accepted`
+as a bullet is recorded as `proposed`, and the response carries a `status_bullet_ignored`
+warning. The same rule applies to `POST /v1/adrs`.
+
 ### What is deliberately absent
 
-Some tools a caller will look for do not exist. Each absence is a decision rather than an
-oversight.
+Some tools a caller will look for still do not exist. Each absence is a decision rather than
+an oversight.
 
 `adr_update` is not there because the premise behind it is wrong. Submitting the same
 `external_ref` with different bytes creates a new revision. A revision never resets the
@@ -282,26 +378,18 @@ status. An accepted decision stays accepted across an edit. A document that fail
 never lands at all, because parsing happens before the transaction opens. There is nothing
 to patch.
 
-`adr_delete` is not there because the append-only history is the product. The supported
-answer is `adr_transition` to `withdrawn`, which leaves the record and its vectors in place
-on purpose.
-
-`adr_bulk_submit` is not there because bulk import is an operator act. `adrian import` walks
-a directory, honours each document's front matter and is idempotent on a re-run, which a
-tool call per file cannot be.
-
-`project_create` is not there for the same reason. Bootstrapping a project is an operator
-act served by `adrian project add`. `project_list` is exposed because it only reads. It is
-how a caller learns the slugs that the other tools need.
-
-Removing a project is an operator act too. `adrian project rm --slug <slug> --force` is the
-only way to do it. Stop the embed worker first so it cannot race the deletion.
+`adr_bulk_submit` is folded into `adr_import`, which keeps the per-document results a
+loop would give while staying one round trip.
 
 ### The safety rule
 
 `adr_submit` **always** creates the decision as `proposed`, whatever the document's own front
 matter says. An agent cannot accept its own decision. Accepting requires a separate
 `adr_transition`, which is a distinct and auditable act.
+
+`adr_import` follows the same rule unless `preserve_status` is set. That flag exists for the
+operator migration path, where the decisions were accepted before Adrian saw them, and it is
+still an explicit request rather than a default.
 
 This is enforced in code and covered by a test, because it is the one rule that keeps a
 decision log from filling with an agent's own conclusions.

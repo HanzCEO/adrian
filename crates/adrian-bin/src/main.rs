@@ -44,8 +44,8 @@ enum Command {
     Check,
     /// Create or remove a project.
     ///
-    /// Bootstrapping a project is an operator act, which is why it lives here rather than
-    /// on the MCP surface that coding agents talk to.
+    /// Bootstrapping a project is an operator act, but the MCP surface also exposes
+    /// `project_create` so an agent is not stuck on a fresh instance with no way to start.
     Project {
         #[command(subcommand)]
         action: ProjectCommand,
@@ -53,8 +53,9 @@ enum Command {
     /// Import a directory of MADR files into a project.
     ///
     /// This is the bootstrap path for an existing corpus. Each document keeps the status
-    /// its own front matter declares, which is why it is an operator command and not an
-    /// MCP tool: an agent submitting through `adr_submit` cannot accept its own decision.
+    /// its own front matter declares, because an import is an operator act. The MCP
+    /// `adr_import` tool mirrors it for agents that have no checkout, and it preserves
+    /// status only when `preserve_status` is set explicitly.
     Import {
         /// Project slug to import into. It must already exist.
         #[arg(long)]

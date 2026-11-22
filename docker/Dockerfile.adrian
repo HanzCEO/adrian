@@ -27,6 +27,9 @@ RUN mkdir -p crates/adrian-core/src crates/adrian-api/src crates/adrian-bin/src 
 
 COPY crates ./crates
 COPY migrations ./migrations
+# The daemon embeds docs/API.md and docs/ADR-SUPPORT.md as MCP resources, so they have to
+# be in the build context before the real compile.
+COPY docs ./docs
 # Touch the sources so cargo rebuilds the crates and not just the stub.
 RUN touch crates/adrian-core/src/lib.rs crates/adrian-api/src/lib.rs crates/adrian-bin/src/main.rs \
  && cargo build --release --bin adrian

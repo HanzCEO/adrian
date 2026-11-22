@@ -79,6 +79,18 @@ pub struct ProjectFootprint {
     pub embed_jobs: i64,
 }
 
+/// What one decision holds, counted before and after a delete.
+///
+/// The same shape a project delete reports, minus `adrs`, because a single-decision delete
+/// always removes exactly one.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct AdrFootprint {
+    pub revisions: i64,
+    pub chunks: i64,
+    pub vectors: i64,
+    pub embed_jobs: i64,
+}
+
 const MIGRATION_0001: &str = include_str!("../../../migrations/0001_init.sql");
 
 /// A handle to the database.
@@ -420,6 +432,33 @@ impl Store {
         })
         .await
     }
+
+    /// Count what one decision holds, without touching it.
+    pub async fn adr_footprint(&self, adr_id: Uuid) -> Result<AdrFootprint> {
+        self.read(move |conn| adr_footprint_sync(conn, adr_id))
+            .await
+    }
+
+    /// Delete one decision and everything that belongs to it.
+    ///
+    /// The same cascade as a project delete, scoped to one `adr` row, in one transaction.
+    /// Vector points in Qdrant are the caller's problem, exactly as they are for a project.
+    pub async fn delete_adr(&self, adr_id: Uuid) -> Result<AdrFootprint> {
+        self.write(move |conn| {
+            conn.execute_batch("BEGIN IMMEDIATE;")?;
+            match delete_adr_sync(conn, adr_id) {
+                Ok(footprint) => {
+                    conn.execute_batch("COMMIT;")?;
+                    Ok(footprint)
+                }
+                Err(err) => {
+                    let _ = conn.execute_batch("ROLLBACK;");
+                    Err(err)
+                }
+            }
+        })
+        .await
+    }
 }
 
 /// The `adr_id` subquery every cascade step keys on.
@@ -545,6 +584,68 @@ fn ensure_default_workspace_sync(conn: &Connection) -> Result<Uuid> {
         params![id, now()],
     )?;
     Ok(id)
+}
+
+fn adr_footprint_sync(conn: &Connection, adr_id: Uuid) -> Result<AdrFootprint> {
+    let count = |sql: &str| -> Result<i64> {
+        conn.query_row(sql, params![adr_id], |row| row.get::<_, i64>(0))
+            .or_store()
+    };
+    Ok(AdrFootprint {
+        revisions: count("SELECT COUNT(*) FROM adr_rev WHERE adr_id = ?1")?,
+        chunks: count("SELECT COUNT(*) FROM chunk WHERE adr_id = ?1")?,
+        vectors: count(
+            "SELECT COUNT(*) FROM chunk_vector WHERE chunk_id IN \
+             (SELECT id FROM chunk WHERE adr_id = ?1)",
+        )?,
+        embed_jobs: count(
+            "SELECT COUNT(*) FROM embed_job WHERE chunk_id IN \
+             (SELECT id FROM chunk WHERE adr_id = ?1)",
+        )?,
+    })
+}
+
+fn delete_adr_sync(conn: &Connection, adr_id: Uuid) -> Result<AdrFootprint> {
+    let exists = conn
+        .query_row("SELECT 1 FROM adr WHERE id = ?1", params![adr_id], |_| {
+            Ok(())
+        })
+        .optional()
+        .or_store()?
+        .is_some();
+    if !exists {
+        return Err(StoreError::NotFound(format!("decision {adr_id}")));
+    }
+
+    let footprint = adr_footprint_sync(conn, adr_id)?;
+
+    // FTS5 is keyed on the chunk table's implicit rowid, so it has to go before the chunk
+    // rows do; otherwise search would keep returning hits for rows that no longer exist.
+    conn.execute(
+        "DELETE FROM chunk_fts WHERE rowid IN (SELECT rowid FROM chunk WHERE adr_id = ?1)",
+        params![adr_id],
+    )?;
+    conn.execute(
+        "DELETE FROM chunk_vector WHERE chunk_id IN (SELECT id FROM chunk WHERE adr_id = ?1)",
+        params![adr_id],
+    )?;
+    conn.execute(
+        "DELETE FROM embed_job WHERE chunk_id IN (SELECT id FROM chunk WHERE adr_id = ?1)",
+        params![adr_id],
+    )?;
+    conn.execute("DELETE FROM item WHERE adr_id = ?1", params![adr_id])?;
+    conn.execute("DELETE FROM section WHERE adr_id = ?1", params![adr_id])?;
+    conn.execute("DELETE FROM chunk WHERE adr_id = ?1", params![adr_id])?;
+    conn.execute(
+        "DELETE FROM status_event WHERE adr_id = ?1",
+        params![adr_id],
+    )?;
+    conn.execute("DELETE FROM scope WHERE adr_id = ?1", params![adr_id])?;
+    conn.execute("DELETE FROM technology WHERE adr_id = ?1", params![adr_id])?;
+    conn.execute("DELETE FROM adr_rev WHERE adr_id = ?1", params![adr_id])?;
+    conn.execute("DELETE FROM adr WHERE id = ?1", params![adr_id])?;
+
+    Ok(footprint)
 }
 
 fn map_project(row: &Row<'_>) -> rusqlite::Result<Project> {

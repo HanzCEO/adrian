@@ -113,6 +113,7 @@ exactly the text reported. This is what makes a citation verifiable rather than 
 | `MissingTitle` | No H1, and no `title` in the front matter. |
 | `InvalidFrontMatter` | The YAML block is malformed or unterminated. Parsing continues without it. |
 | `UnknownStatus` | The status is not in Adrian's closed vocabulary. Falls back to `proposed`. |
+| `StatusBulletIgnored` | The document writes its status as a `- **Status:** ...` bullet. Status is read from front matter only, so the bullet is ignored and the decision lands as `proposed`. |
 | `UnmatchedOption` | An option has no Pros and Cons subsection. |
 | `OrphanProsCons` | A Pros and Cons subsection matches no option. |
 | `MissingSection` | A section MADR expects is absent. |
@@ -134,6 +135,25 @@ Imports are mapped onto it: `open`, `draft`, `pending` and `proposal` become `pr
 `approved`, `agreed` and `decided` become `accepted`; `obsolete` becomes `deprecated`;
 `abandoned` becomes `withdrawn`; `superseded by ADR-0123` becomes `superseded`. Anything else
 produces an `UnknownStatus` warning and falls back to `proposed`.
+
+Status is read from YAML front matter only. Many hand-written corpora put it in a bullet
+under the title instead:
+
+```markdown
+# Whitelabel upstream identity
+
+- **Status:** Accepted
+- **Date:** 2026-09-11
+```
+
+That bullet is not front matter and is not read. The decision lands as `proposed` and the
+parser emits a `StatusBulletIgnored` warning naming the value it saw. To keep an existing
+status, move it into front matter or migrate with `preserve_status` so the status is recorded
+as an explicit operator act.
+
+`preserve_status` is also the reason `adr_import` differs from `adr_submit`. A submission
+forces `proposed` because an agent must not accept its own decision. A migration records what
+the corpus already says, because those decisions were accepted before Adrian saw them.
 
 ## Round-tripping
 

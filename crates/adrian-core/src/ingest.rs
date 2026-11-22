@@ -129,6 +129,35 @@ pub async fn ingest(
         .or(parsed.status)
         .unwrap_or(Status::Proposed);
 
+    // A revision never changes the status: `insert_revision_inner` only updates `cur_rev`
+    // for an existing decision. The response must report what the decision actually is,
+    // not the status this document would have had if it were new, otherwise re-importing
+    // an accepted decision would claim it landed as `proposed`.
+    let outcome_status = match &existing {
+        Some(adr) => adr.cur_status,
+        None => status,
+    };
+
+    // Forcing a status must not hide what the document itself claimed. A caller that wrote
+    // `status: accepted` and got `proposed` back needs to see that in the response, not
+    // discover it in a list query later. Only a new decision can be forced; a revision
+    // keeps whatever status it already had.
+    let mut warnings = parsed.warnings.clone();
+    if existing.is_none() {
+        if let (Some(forced), Some(declared)) = (request.status_override, parsed.status) {
+            if forced != declared {
+                warnings.push(ParseWarning::Note {
+                    message: format!(
+                        "the document declares `{}` but this submission records `{}`; a human \
+                         must accept it with adr_transition",
+                        declared.as_str(),
+                        forced.as_str()
+                    ),
+                });
+            }
+        }
+    }
+
     let chunked = chunker::chunk(
         &parsed,
         &source_text,
@@ -266,9 +295,9 @@ pub async fn ingest(
         action,
         adr_id,
         rev,
-        status,
+        status: outcome_status,
         chunks: chunk_count,
-        warnings: parsed.warnings.clone(),
+        warnings,
         superseded_points: superseded.into_iter().map(|(_, point)| point).collect(),
     })
 }

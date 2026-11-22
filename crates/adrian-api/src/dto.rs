@@ -69,6 +69,25 @@ pub struct ProjectListItem {
     pub adr_count: i64,
 }
 
+#[derive(Debug, Serialize)]
+pub struct DeleteProjectResponse {
+    pub deleted: bool,
+    pub slug: String,
+    pub footprint: FootprintView,
+}
+
+/// What a delete reported removing. A project and a single decision share the shape so a
+/// client can render both without a special case.
+#[derive(Debug, Serialize)]
+pub struct FootprintView {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub adrs: Option<i64>,
+    pub revisions: i64,
+    pub chunks: i64,
+    pub vectors: i64,
+    pub embed_jobs: i64,
+}
+
 // ---------------------------------------------------------------------------
 // ADRs
 // ---------------------------------------------------------------------------
@@ -206,6 +225,77 @@ pub struct TransitionRequest {
 pub struct TransitionResponse {
     pub status: String,
     pub event_id: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DeleteAdrResponse {
+    pub deleted: bool,
+    pub id: String,
+    pub external_ref: String,
+    pub footprint: FootprintView,
+}
+
+// ---------------------------------------------------------------------------
+// Batch import
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+pub struct BatchImportRequest {
+    /// Project slug.
+    pub project: String,
+    #[serde(default)]
+    pub actor: Option<String>,
+    /// Keep the status each document's own front matter declares.
+    ///
+    /// Off by default, for the same reason `adr_submit` forces `proposed`: a submission
+    /// must not accept its own decision. Set it only when migrating a corpus whose
+    /// decisions were already accepted elsewhere.
+    #[serde(default)]
+    pub preserve_status: bool,
+    pub documents: Vec<BatchDocument>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct BatchDocument {
+    pub external_ref: String,
+    pub source: String,
+    #[serde(default)]
+    pub source_format: Option<String>,
+    #[serde(default)]
+    pub scopes: Vec<String>,
+    #[serde(default)]
+    pub idempotency_key: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct BatchImportResponse {
+    pub project: String,
+    pub created: usize,
+    pub revised: usize,
+    pub unchanged: usize,
+    pub failed: usize,
+    pub results: Vec<BatchItemResult>,
+}
+
+/// One document's outcome inside a batch. A failure is recorded here rather than aborting
+/// the batch, because a 163-file import should report the two bad files, not lose the 161
+/// good ones.
+#[derive(Debug, Serialize)]
+pub struct BatchItemResult {
+    pub external_ref: String,
+    /// `created`, `revised`, `unchanged` or `failed`.
+    pub action: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rev: Option<i64>,
+    /// The status the decision was recorded with, when the ingest succeeded.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<ParseWarning>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 // ---------------------------------------------------------------------------

@@ -13,7 +13,7 @@ use adrian_core::ingest::{ingest, IngestRequest};
 use adrian_core::types::*;
 use axum::extract::State;
 use axum::http::StatusCode;
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use serde_json::json;
 use std::collections::BTreeMap;
@@ -32,8 +32,10 @@ pub fn router() -> Router<AppState> {
         .route("/healthz", get(healthz))
         .route("/v1/models", get(models))
         .route("/v1/projects", get(list_projects).post(create_project))
+        .route("/v1/projects/{*slug}", delete(delete_project))
         .route("/v1/adrs", get(list_adrs).post(create_adr))
-        .route("/v1/adrs/{id}", get(get_adr))
+        .route("/v1/adrs/batch", post(batch_import))
+        .route("/v1/adrs/{id}", get(get_adr).delete(delete_adr))
         .route("/v1/adrs/{id}/chunks", get(get_adr_chunks))
         .route("/v1/adrs/{id}/transition", post(transition))
         .route("/v1/adrs/{id}/similar", get(similar))
@@ -154,6 +156,38 @@ pub async fn list_projects(State(state): State<AppState>) -> ApiResult<Json<Vec<
     ))
 }
 
+#[tracing::instrument(name = "delete_project", skip(state))]
+pub async fn delete_project(
+    State(state): State<AppState>,
+    ApiPath(slug): ApiPath<String>,
+) -> ApiResult<Json<DeleteProjectResponse>> {
+    let project = state
+        .store
+        .get_project_by_slug(slug.clone())
+        .await?
+        .ok_or_else(|| ApiError::not_found(format!("project `{slug}` does not exist")))?;
+
+    // Clear the index first. A point that outlives its row makes search return a decision
+    // that no longer exists, which is worse than a delete that did not happen.
+    state
+        .qdrant
+        .delete_points_for_project(&state.settings.collection, project.id)
+        .await?;
+    let footprint = state.store.delete_project(project.id).await?;
+
+    Ok(Json(DeleteProjectResponse {
+        deleted: true,
+        slug: project.slug,
+        footprint: FootprintView {
+            adrs: Some(footprint.adrs),
+            revisions: footprint.revisions,
+            chunks: footprint.chunks,
+            vectors: footprint.vectors,
+            embed_jobs: footprint.embed_jobs,
+        },
+    }))
+}
+
 // ---------------------------------------------------------------------------
 // ADRs
 // ---------------------------------------------------------------------------
@@ -164,13 +198,6 @@ pub async fn create_adr(
     headers: axum::http::HeaderMap,
     ApiJson(request): ApiJson<CreateAdrRequest>,
 ) -> ApiResult<(StatusCode, Json<IngestResponse>)> {
-    if request.source.trim().is_empty() {
-        return Err(ApiError::invalid("`source` must not be empty"));
-    }
-    if request.external_ref.trim().is_empty() {
-        return Err(ApiError::invalid("`external_ref` must not be empty"));
-    }
-
     let project = state
         .store
         .get_project_by_slug(request.project.clone())
@@ -186,7 +213,73 @@ pub async fn create_adr(
             .map(|value| value.to_string())
     });
 
-    let request_sha = adrian_core::ingest::sha256(request.source.as_bytes());
+    let actor = request
+        .actor
+        .clone()
+        .unwrap_or_else(|| "human:anonymous".to_string());
+
+    // The REST endpoint does not force a status: it is the operator surface, and an import
+    // that loses its statuses is not an import. `adr_submit` over MCP is the one that
+    // forces `proposed`.
+    let response = ingest_document(
+        &state,
+        &project,
+        DocumentIngest {
+            external_ref: request.external_ref,
+            source: request.source,
+            source_format: request.source_format,
+            scopes: request.scopes,
+            actor,
+            idempotency_key,
+            status_override: None,
+        },
+    )
+    .await?;
+
+    Ok((StatusCode::CREATED, Json(response)))
+}
+
+/// One document to ingest, independent of which surface asked for it.
+///
+/// The fields are bundled rather than passed positionally because the batch, single and
+/// MCP paths all build the same thing and a nine-argument call invites a swap.
+pub(crate) struct DocumentIngest {
+    pub external_ref: String,
+    pub source: String,
+    pub source_format: Option<String>,
+    pub scopes: Vec<String>,
+    pub actor: String,
+    pub idempotency_key: Option<String>,
+    pub status_override: Option<Status>,
+}
+
+/// Ingest one document and render the response.
+///
+/// Shared by `POST /v1/adrs`, `POST /v1/adrs/batch` and the MCP `adr_import` tool so that
+/// idempotency replay, scope normalisation and index cleanup cannot drift between them.
+pub(crate) async fn ingest_document(
+    state: &AppState,
+    project: &Project,
+    document: DocumentIngest,
+) -> ApiResult<IngestResponse> {
+    let DocumentIngest {
+        external_ref,
+        source,
+        source_format,
+        scopes,
+        actor,
+        idempotency_key,
+        status_override,
+    } = document;
+
+    if source.trim().is_empty() {
+        return Err(ApiError::invalid("`source` must not be empty"));
+    }
+    if external_ref.trim().is_empty() {
+        return Err(ApiError::invalid("`external_ref` must not be empty"));
+    }
+
+    let request_sha = adrian_core::ingest::sha256(source.as_bytes());
 
     // Replay a stored response when the same key arrives with the same body, and refuse
     // when it arrives with a different one. Agents retry; this is what makes that safe.
@@ -205,17 +298,11 @@ pub async fn create_adr(
                 serde_json::from_str(stored_body.as_str()).map_err(|err| {
                     ApiError::internal(format!("stored response is unreadable: {err}"))
                 })?;
-            return Ok((StatusCode::CREATED, Json(response)));
+            return Ok(response);
         }
     }
 
-    let actor = request
-        .actor
-        .clone()
-        .unwrap_or_else(|| "human:anonymous".to_string());
-
-    let declared_scopes = request
-        .scopes
+    let declared_scopes = scopes
         .iter()
         .filter_map(|value| normalize_declared_scope(value))
         .collect::<Vec<Scope>>();
@@ -224,15 +311,12 @@ pub async fn create_adr(
         &state.store,
         IngestRequest {
             project_id: project.id,
-            external_ref: request.external_ref.clone(),
-            source: request.source.clone().into_bytes(),
-            source_format: request
-                .source_format
-                .clone()
-                .unwrap_or_else(|| "markdown".to_string()),
+            external_ref,
+            source: source.into_bytes(),
+            source_format: source_format.unwrap_or_else(|| "markdown".to_string()),
             actor,
             declared_scopes,
-            status_override: None,
+            status_override,
             embed_model: state.settings.embed_model.clone(),
             embed_version: state.settings.embed_version,
             number: None,
@@ -273,7 +357,133 @@ pub async fn create_adr(
             .await?;
     }
 
-    Ok((StatusCode::CREATED, Json(response)))
+    Ok(response)
+}
+
+#[tracing::instrument(name = "batch_import", skip(state, request))]
+pub async fn batch_import(
+    State(state): State<AppState>,
+    ApiJson(request): ApiJson<BatchImportRequest>,
+) -> ApiResult<(StatusCode, Json<BatchImportResponse>)> {
+    if request.documents.is_empty() {
+        return Err(ApiError::invalid("`documents` must not be empty"));
+    }
+
+    let project = state
+        .store
+        .get_project_by_slug(request.project.clone())
+        .await?
+        .ok_or_else(|| {
+            ApiError::not_found(format!("project `{}` does not exist", request.project))
+        })?;
+
+    let actor = request
+        .actor
+        .clone()
+        .unwrap_or_else(|| "human:anonymous".to_string());
+
+    // Off by default: a submission must not accept its own decision. `preserve_status` is
+    // the operator migration path, where the decisions were accepted before Adrian saw
+    // them and the document's own front matter is the authority.
+    let status_override = if request.preserve_status {
+        None
+    } else {
+        Some(Status::Proposed)
+    };
+
+    let mut created = 0usize;
+    let mut revised = 0usize;
+    let mut unchanged = 0usize;
+    let mut failed = 0usize;
+    let mut results = Vec::with_capacity(request.documents.len());
+
+    for document in request.documents {
+        let external_ref = document.external_ref.clone();
+        match ingest_document(
+            &state,
+            &project,
+            DocumentIngest {
+                external_ref: document.external_ref,
+                source: document.source,
+                source_format: document.source_format,
+                scopes: document.scopes,
+                actor: actor.clone(),
+                idempotency_key: document.idempotency_key,
+                status_override,
+            },
+        )
+        .await
+        {
+            Ok(response) => {
+                match response.action.as_str() {
+                    "created" => created += 1,
+                    "revised" => revised += 1,
+                    _ => unchanged += 1,
+                }
+                results.push(BatchItemResult {
+                    external_ref,
+                    action: response.action,
+                    id: Some(response.id),
+                    rev: Some(response.rev),
+                    status: Some(response.status),
+                    warnings: response.warnings,
+                    error: None,
+                });
+            }
+            Err(err) => {
+                failed += 1;
+                results.push(BatchItemResult {
+                    external_ref,
+                    action: "failed".to_string(),
+                    id: None,
+                    rev: None,
+                    status: None,
+                    warnings: Vec::new(),
+                    error: Some(err.to_string()),
+                });
+            }
+        }
+    }
+
+    Ok((
+        StatusCode::CREATED,
+        Json(BatchImportResponse {
+            project: project.slug,
+            created,
+            revised,
+            unchanged,
+            failed,
+            results,
+        }),
+    ))
+}
+
+#[tracing::instrument(name = "delete_adr", skip(state))]
+pub async fn delete_adr(
+    State(state): State<AppState>,
+    ApiPath(id): ApiPath<String>,
+) -> ApiResult<Json<DeleteAdrResponse>> {
+    let adr_id = parse_uuid(&id)?;
+    let adr = state.store.get_adr(adr_id).await?;
+
+    state
+        .qdrant
+        .delete_adr_points(&state.settings.collection, adr_id)
+        .await?;
+    let footprint = state.store.delete_adr(adr_id).await?;
+
+    Ok(Json(DeleteAdrResponse {
+        deleted: true,
+        id: adr_id.to_string(),
+        external_ref: adr.external_ref,
+        footprint: FootprintView {
+            adrs: None,
+            revisions: footprint.revisions,
+            chunks: footprint.chunks,
+            vectors: footprint.vectors,
+            embed_jobs: footprint.embed_jobs,
+        },
+    }))
 }
 
 fn normalize_declared_scope(value: &str) -> Option<Scope> {

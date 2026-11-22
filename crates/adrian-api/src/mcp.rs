@@ -2,7 +2,7 @@
 //!
 //! The transport is the streamable-HTTP subset that coding agents actually use: one
 //! JSON-RPC request per POST, a single JSON response, and batch arrays processed in order.
-//! No SSE streaming, because none of the eight tools produces partial results.
+//! No SSE streaming, because none of the twelve tools produces partial results.
 //!
 //! Tool failures are reported as `isError: true` inside a successful response, which is the
 //! MCP convention. Only protocol-level problems become JSON-RPC errors.
@@ -113,13 +113,48 @@ async fn handle_one(state: &AppState, request: Value) -> Option<Value> {
             id,
             json!({
                 "protocolVersion": PROTOCOL_VERSION,
-                "capabilities": { "tools": {} },
+                "capabilities": { "tools": {}, "resources": {} },
                 "serverInfo": { "name": "adrian", "version": adrian_core::VERSION },
             }),
         )),
         "notifications/initialized" => None,
         "ping" => Some(ok_response(id, json!({}))),
         "tools/list" => Some(ok_response(id, json!({ "tools": tool_catalogue() }))),
+        // Resources are how a caller reads the contract without a checkout. The status
+        // rules and the MADR support table are not discoverable from a tool schema, and
+        // guessing them wrong is silent, so they are served as documents.
+        "resources/list" => Some(ok_response(
+            id,
+            json!({ "resources": resource_catalogue() }),
+        )),
+        "resources/read" => {
+            if is_notification {
+                return None;
+            }
+            let uri = params.get("uri").and_then(|value| value.as_str());
+            match uri.map(read_resource) {
+                Some(Some(text)) => Some(ok_response(
+                    id,
+                    json!({
+                        "contents": [{
+                            "uri": uri,
+                            "mimeType": "text/markdown",
+                            "text": text,
+                        }]
+                    }),
+                )),
+                Some(None) => Some(error_response(
+                    id,
+                    -32602,
+                    &format!("unknown resource `{}`", uri.unwrap_or_default()),
+                )),
+                None => Some(error_response(
+                    id,
+                    -32602,
+                    "invalid params: `resources/read` requires a string `uri`",
+                )),
+            }
+        }
         "tools/call" => {
             // The tool name and its arguments are part of the request's structure, so a
             // malformed one is -32602. Only failures *inside* a well-formed call become a
@@ -189,7 +224,43 @@ fn tool_result(text: &str, is_error: bool) -> Value {
     })
 }
 
-/// The eight tools, with descriptions written for a model rather than for a human reading
+/// The documents this server serves over `resources/read`.
+///
+/// Embedded at build time so a client that only has the container gets the same contract a
+/// contributor reading the repository would.
+const API_DOC: &str = include_str!("../../../docs/API.md");
+const MADR_DOC: &str = include_str!("../../../docs/ADR-SUPPORT.md");
+
+/// The resources, with descriptions written for a model deciding whether to read one.
+fn resource_catalogue() -> Vec<Value> {
+    vec![
+        json!({
+            "uri": "adrian://docs/api",
+            "name": "REST and MCP API reference",
+            "description": "Every REST route and MCP tool, with request and response shapes \
+                            and the stable error codes.",
+            "mimeType": "text/markdown",
+        }),
+        json!({
+            "uri": "adrian://docs/madr",
+            "name": "MADR support and the status contract",
+            "description": "What the parser understands. Status is read from YAML front \
+                            matter only; a `- **Status:**` bullet is ignored and the decision \
+                            lands as `proposed`.",
+            "mimeType": "text/markdown",
+        }),
+    ]
+}
+
+fn read_resource(uri: &str) -> Option<&'static str> {
+    match uri {
+        "adrian://docs/api" => Some(API_DOC),
+        "adrian://docs/madr" => Some(MADR_DOC),
+        _ => None,
+    }
+}
+
+/// The twelve tools, with descriptions written for a model rather than for a human reading
 /// a reference page: each one says when to reach for it.
 fn tool_catalogue() -> Vec<Value> {
     vec![
@@ -203,6 +274,34 @@ fn tool_catalogue() -> Vec<Value> {
                 "properties": {
                     "limit": { "type": "integer", "default": 50, "minimum": 1, "maximum": 200 }
                 }
+            }
+        }),
+        json!({
+            "name": "project_create",
+            "description": "Create a project. Every decision belongs to one, so this is the \
+                            first call on a fresh instance; `adr_submit` and `adr_import` \
+                            fail with `no project exists yet` until a project exists.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "slug": { "type": "string", "description": "Short identifier every other tool takes, for example `arilo-id`." },
+                    "name": { "type": "string", "description": "Human readable name." },
+                    "repo_url": { "type": "string", "description": "Repository these decisions come from, if any." }
+                },
+                "required": ["slug", "name"]
+            }
+        }),
+        json!({
+            "name": "project_delete",
+            "description": "Delete a project and every decision, revision, chunk and vector \
+                            that belongs to it. Irreversible; use it to remove a probe or a \
+                            project created by mistake.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "slug": { "type": "string" }
+                },
+                "required": ["slug"]
             }
         }),
         json!({
@@ -249,7 +348,10 @@ fn tool_catalogue() -> Vec<Value> {
         json!({
             "name": "adr_submit",
             "description": "Record a new architectural decision. It always lands as \
-                            `proposed`; a human accepts it later.",
+                            `proposed`; a human accepts it later with `adr_transition`. \
+                            Status is read from YAML front matter only, so a document whose \
+                            status is a `- **Status:**` bullet is recorded as `proposed` and \
+                            the response carries a warning saying so.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -261,6 +363,53 @@ fn tool_catalogue() -> Vec<Value> {
                     "idempotency_key": { "type": "string" }
                 },
                 "required": ["project", "external_ref", "source", "actor"]
+            }
+        }),
+        json!({
+            "name": "adr_import",
+            "description": "Bootstrap an existing corpus: ingest many MADR documents in one \
+                            call. Use it instead of looping `adr_submit` when migrating a \
+                            directory of ADRs. By default each document lands `proposed`; \
+                            set `preserve_status` only when the decisions were already \
+                            accepted elsewhere, because that records the document's own \
+                            status without a human transition. One bad document does not \
+                            abort the batch; it comes back as `failed` in the results.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "project": { "type": "string" },
+                    "actor": { "type": "string", "description": "Who is importing, for example `human:hanz`." },
+                    "preserve_status": { "type": "boolean", "default": false, "description": "Record each document's declared status instead of forcing `proposed`." },
+                    "documents": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "external_ref": { "type": "string", "description": "Stable key, for example `docs/adr/0001-whitelabel.md`." },
+                                "source": { "type": "string", "description": "The MADR document as Markdown." },
+                                "source_format": { "type": "string" },
+                                "scopes": { "type": "array", "items": { "type": "string" } },
+                                "idempotency_key": { "type": "string" }
+                            },
+                            "required": ["external_ref", "source"]
+                        }
+                    }
+                },
+                "required": ["project", "actor", "documents"]
+            }
+        }),
+        json!({
+            "name": "adr_delete",
+            "description": "Delete one decision and everything that belongs to it, including \
+                            its vector points. Irreversible; use it to remove a probe or a \
+                            decision submitted by mistake.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "id": { "type": "string", "description": "Decision id." }
+                },
+                "required": ["id"]
             }
         }),
         json!({
@@ -314,10 +463,14 @@ async fn call_tool(state: &AppState, name: &str, arguments: Value) -> Result<Str
         "adr_get" => tool_get(state, arguments).await,
         "adr_list" => tool_list(state, arguments).await,
         "adr_submit" => tool_submit(state, arguments).await,
+        "adr_import" => tool_import(state, arguments).await,
+        "adr_delete" => tool_delete(state, arguments).await,
         "adr_similar" => tool_similar(state, arguments).await,
         "adr_transition" => tool_transition(state, arguments).await,
         "adr_context_for" => tool_context(state, arguments).await,
         "project_list" => tool_project_list(state, arguments).await,
+        "project_create" => tool_project_create(state, arguments).await,
+        "project_delete" => tool_project_delete(state, arguments).await,
         other => Err(format!("unknown tool `{other}`")),
     }
 }
@@ -394,6 +547,237 @@ async fn tool_project_list(state: &AppState, arguments: Value) -> Result<String,
         .collect::<Vec<_>>();
 
     Ok(render(&json!({ "projects": out })))
+}
+
+async fn tool_project_create(state: &AppState, arguments: Value) -> Result<String, String> {
+    let slug = required_string(&arguments, "slug")?;
+    let name = required_string(&arguments, "name")?;
+    adrian_core::types::validate_project_slug(slug.trim()).map_err(|err| err.to_string())?;
+
+    if state
+        .store
+        .get_project_by_slug(slug.trim().to_string())
+        .await
+        .map_err(|e| e.to_string())?
+        .is_some()
+    {
+        return Err(format!("project `{slug}` already exists"));
+    }
+
+    let workspace = state
+        .store
+        .ensure_default_workspace()
+        .await
+        .map_err(|e| e.to_string())?;
+    let project = Project {
+        id: Uuid::now_v7(),
+        workspace_id: workspace,
+        slug: slug.trim().to_string(),
+        name: name.trim().to_string(),
+        repo_url: string_arg(&arguments, "repo_url"),
+        default_template: "madr".to_string(),
+        embed_model: state.settings.embed_model.clone(),
+        embed_version: state.settings.embed_version,
+        created_at: chrono::Utc::now().timestamp(),
+    };
+    state
+        .store
+        .create_project(project.clone())
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(render(&json!({
+        "id": project.id.to_string(),
+        "slug": project.slug,
+        "name": project.name,
+        "repo_url": project.repo_url,
+        "created_at": rfc3339(project.created_at),
+    })))
+}
+
+async fn tool_project_delete(state: &AppState, arguments: Value) -> Result<String, String> {
+    let slug = required_string(&arguments, "slug")?;
+    let project = state
+        .store
+        .get_project_by_slug(slug.clone())
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("project `{slug}` does not exist"))?;
+
+    // Clear the index first, for the same reason a project delete does: a point that
+    // outlives its row is worse than a delete that did not happen.
+    state
+        .qdrant
+        .delete_points_for_project(&state.settings.collection, project.id)
+        .await
+        .map_err(|e| e.to_string())?;
+    let footprint = state
+        .store
+        .delete_project(project.id)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(render(&json!({
+        "deleted": true,
+        "slug": project.slug,
+        "footprint": {
+            "adrs": footprint.adrs,
+            "revisions": footprint.revisions,
+            "chunks": footprint.chunks,
+            "vectors": footprint.vectors,
+            "embed_jobs": footprint.embed_jobs,
+        },
+    })))
+}
+
+async fn tool_delete(state: &AppState, arguments: Value) -> Result<String, String> {
+    let id = required_string(&arguments, "id")?;
+    let adr_id = Uuid::parse_str(&id).map_err(|_| format!("`{id}` is not a uuid"))?;
+    let adr = state
+        .store
+        .get_adr(adr_id)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    state
+        .qdrant
+        .delete_adr_points(&state.settings.collection, adr_id)
+        .await
+        .map_err(|e| e.to_string())?;
+    let footprint = state
+        .store
+        .delete_adr(adr_id)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(render(&json!({
+        "deleted": true,
+        "adr_id": adr_id.to_string(),
+        "external_ref": adr.external_ref,
+        "footprint": {
+            "revisions": footprint.revisions,
+            "chunks": footprint.chunks,
+            "vectors": footprint.vectors,
+            "embed_jobs": footprint.embed_jobs,
+        },
+    })))
+}
+
+async fn tool_import(state: &AppState, arguments: Value) -> Result<String, String> {
+    let project = resolve_project(state, string_arg(&arguments, "project")).await?;
+    let actor = required_string(&arguments, "actor")?;
+    let preserve_status = arguments
+        .get("preserve_status")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
+    let status_override = if preserve_status {
+        None
+    } else {
+        Some(Status::Proposed)
+    };
+
+    let documents = arguments
+        .get("documents")
+        .and_then(|value| value.as_array())
+        .ok_or_else(|| "`documents` must be an array".to_string())?;
+    if documents.is_empty() {
+        return Err("`documents` must not be empty".to_string());
+    }
+
+    let mut created = 0usize;
+    let mut revised = 0usize;
+    let mut unchanged = 0usize;
+    let mut failed = 0usize;
+    let mut results = Vec::with_capacity(documents.len());
+
+    for document in documents {
+        let Some(external_ref) = document.get("external_ref").and_then(|v| v.as_str()) else {
+            failed += 1;
+            results.push(json!({
+                "external_ref": Value::Null,
+                "action": "failed",
+                "error": "each document needs a string `external_ref`",
+            }));
+            continue;
+        };
+        let Some(source) = document.get("source").and_then(|v| v.as_str()) else {
+            failed += 1;
+            results.push(json!({
+                "external_ref": external_ref,
+                "action": "failed",
+                "error": "each document needs a string `source`",
+            }));
+            continue;
+        };
+        let scopes = document
+            .get("scopes")
+            .and_then(|value| value.as_array())
+            .map(|values| {
+                values
+                    .iter()
+                    .filter_map(|value| value.as_str().map(|s| s.to_string()))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let source_format = document
+            .get("source_format")
+            .and_then(|value| value.as_str())
+            .map(|value| value.to_string());
+        let idempotency_key = document
+            .get("idempotency_key")
+            .and_then(|value| value.as_str())
+            .map(|value| value.to_string());
+
+        match crate::rest::ingest_document(
+            state,
+            &project,
+            crate::rest::DocumentIngest {
+                external_ref: external_ref.to_string(),
+                source: source.to_string(),
+                source_format,
+                scopes,
+                actor: actor.clone(),
+                idempotency_key,
+                status_override,
+            },
+        )
+        .await
+        {
+            Ok(response) => {
+                match response.action.as_str() {
+                    "created" => created += 1,
+                    "revised" => revised += 1,
+                    _ => unchanged += 1,
+                }
+                results.push(json!({
+                    "external_ref": external_ref,
+                    "action": response.action,
+                    "adr_id": response.id,
+                    "rev": response.rev,
+                    "status": response.status,
+                    "chunks": response.chunks,
+                    "warnings": response.warnings,
+                }));
+            }
+            Err(err) => {
+                failed += 1;
+                results.push(json!({
+                    "external_ref": external_ref,
+                    "action": "failed",
+                    "error": err.to_string(),
+                }));
+            }
+        }
+    }
+
+    Ok(render(&json!({
+        "project": project.slug,
+        "created": created,
+        "revised": revised,
+        "unchanged": unchanged,
+        "failed": failed,
+        "results": results,
+    })))
 }
 
 async fn tool_search(state: &AppState, arguments: Value) -> Result<String, String> {
@@ -812,7 +1196,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_catalogue_advertises_all_eight_tools_with_descriptions() {
+    fn the_catalogue_advertises_all_twelve_tools_with_descriptions() {
         let tools = tool_catalogue();
         let names: Vec<&str> = tools
             .iter()
@@ -822,10 +1206,14 @@ mod tests {
             names,
             vec![
                 "project_list",
+                "project_create",
+                "project_delete",
                 "adr_search",
                 "adr_get",
                 "adr_list",
                 "adr_submit",
+                "adr_import",
+                "adr_delete",
                 "adr_similar",
                 "adr_transition",
                 "adr_context_for",
@@ -842,6 +1230,30 @@ mod tests {
                 "tool is missing an input schema"
             );
         }
+    }
+
+    #[test]
+    fn the_resource_catalogue_covers_every_readable_uri() {
+        let resources = resource_catalogue();
+        assert_eq!(resources.len(), 2);
+        for resource in &resources {
+            let uri = resource.get("uri").and_then(|v| v.as_str()).expect("uri");
+            assert!(
+                read_resource(uri).is_some(),
+                "`{uri}` is advertised but not readable"
+            );
+            assert!(!read_resource(uri).unwrap_or_default().is_empty());
+        }
+        assert!(read_resource("adrian://docs/nope").is_none());
+    }
+
+    #[test]
+    fn the_madr_resource_names_the_status_contract() {
+        let text = read_resource("adrian://docs/madr").expect("madr doc");
+        assert!(
+            text.contains("Status") || text.contains("status"),
+            "the MADR doc should say where status comes from"
+        );
     }
 
     #[test]

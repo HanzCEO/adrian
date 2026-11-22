@@ -28,6 +28,16 @@ pub fn parse_str(text: &str) -> ParsedAdr {
     let mut warnings = Vec::new();
     let (front, body_offset) = frontmatter::parse(text, &mut warnings);
 
+    // Front matter is the only place Adrian reads status from. Many corpora write it as a
+    // `- **Status:** Accepted` bullet under the title instead, which would otherwise be
+    // dropped without a word and land the decision as `proposed`. Only the body is
+    // scanned: the front matter has already been interpreted above.
+    if front.status_raw.is_none() {
+        if let Some(raw) = status_bullet(&text[body_offset.min(text.len())..]) {
+            warnings.push(ParseWarning::StatusBulletIgnored { raw });
+        }
+    }
+
     let body = &text[body_offset.min(text.len())..];
     let headings = HeadingScanner::scan(body);
 
@@ -218,6 +228,60 @@ fn option_key_of_heading(heading: &str) -> String {
     option_key(heading)
 }
 
+/// Find a `- **Status:** Accepted` style bullet in a document body.
+///
+/// The bullet is not part of MADR proper, but it is common enough in hand-written corpora
+/// that dropping it silently is a trap. Fenced code blocks are skipped, because a MADR
+/// document often shows a front-matter example inside one. Only the first such bullet is
+/// reported: a document with two has a bigger problem than the parser can name.
+fn status_bullet(text: &str) -> Option<String> {
+    let mut fence: Option<&str> = None;
+    for line in text.lines() {
+        let trimmed = line.trim_start();
+        if let Some(marker) = fence {
+            if trimmed.starts_with(marker) {
+                fence = None;
+            }
+            continue;
+        }
+        if trimmed.starts_with("```") {
+            fence = Some("```");
+            continue;
+        }
+        if trimmed.starts_with("~~~") {
+            fence = Some("~~~");
+            continue;
+        }
+
+        let bullet = trimmed
+            .strip_prefix("- ")
+            .or_else(|| trimmed.strip_prefix("* "))
+            .or_else(|| trimmed.strip_prefix("+ "));
+        let candidate = bullet.unwrap_or(trimmed).trim();
+        for prefix in ["**Status:**", "**Status**:", "**status:**", "**status**:"] {
+            if let Some(rest) = candidate.strip_prefix(prefix) {
+                let value = rest.trim().trim_matches(['*', '_']).trim();
+                if !value.is_empty() {
+                    return Some(value.to_string());
+                }
+            }
+        }
+        // A bare `Status: ...` line is accepted only when it is a bullet, so that a stray
+        // YAML-looking line in prose is not mistaken for metadata.
+        if bullet.is_some() {
+            for prefix in ["Status:", "status:"] {
+                if let Some(rest) = candidate.strip_prefix(prefix) {
+                    let value = rest.trim().trim_matches(['*', '_']).trim();
+                    if !value.is_empty() {
+                        return Some(value.to_string());
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
 /// Best-effort template identification. Used for reporting, not for parsing.
 fn detect_template(text: &str, front: &FrontMatter) -> String {
     let lowered = text.to_ascii_lowercase();
@@ -405,6 +469,44 @@ A smaller alternative.
             .warnings
             .iter()
             .any(|w| matches!(w, ParseWarning::UnknownStatus { .. })));
+    }
+
+    #[test]
+    fn a_status_bullet_is_reported_because_it_is_ignored() {
+        // Status comes from front matter only. A bullet under the title is common and
+        // silently dropped, so the parser says so rather than letting the decision land
+        // as `proposed` without explanation.
+        let adr =
+            parse_str("# T\n\n- **Status:** Accepted\n- **Date:** 2024-03-01\n\n## Context\n\nx\n");
+        assert!(adr.status.is_none(), "a bullet is not front matter");
+        assert!(
+            adr.warnings.iter().any(
+                |w| matches!(w, ParseWarning::StatusBulletIgnored { raw } if raw == "Accepted")
+            ),
+            "got {:?}",
+            adr.warnings
+        );
+    }
+
+    #[test]
+    fn front_matter_status_wins_over_a_stray_bullet() {
+        let adr = parse_str(
+            "---\nstatus: accepted\n---\n# T\n\n- **Status:** Proposed\n\n## Context\n\nx\n",
+        );
+        assert_eq!(adr.status, Some(Status::Accepted));
+        assert!(!adr
+            .warnings
+            .iter()
+            .any(|w| matches!(w, ParseWarning::StatusBulletIgnored { .. })));
+    }
+
+    #[test]
+    fn a_bullet_that_is_not_a_status_is_not_reported() {
+        let adr = parse_str("# T\n\n- **Owner:** someone\n\n## Context\n\nx\n");
+        assert!(!adr
+            .warnings
+            .iter()
+            .any(|w| matches!(w, ParseWarning::StatusBulletIgnored { .. })));
     }
 
     #[test]

@@ -86,18 +86,18 @@ adrian check                                       # compare SQLite against the 
 reconcile that silently fixes things hides the bug that caused the drift.
 
 `import` is the bootstrap path for a corpus that already exists. Each document keeps the
-status its own front matter declares, which is why it is an operator command rather than a
-tool an agent can call. A second run over unchanged files reports every file as `unchanged`
-and enqueues no work. An interrupted import can therefore be run again as it is.
-`--dry-run` parses the whole corpus and reports what would land, including duplicate
-display numbers, without writing anything.
+status its own front matter declares. The MCP `adr_import` tool covers the same case over
+the wire when an agent must bootstrap a corpus and no checkout is available. A second run
+over unchanged files reports every file as `unchanged` and enqueues no work. An interrupted
+import can therefore be run again as it is. `--dry-run` parses the whole corpus and reports
+what would land, including duplicate display numbers, without writing anything.
 
 Removing a project needs `--force`. The vector index is cleared before the database. Stop
 the daemon first so the embed worker cannot race the deletion.
 
 ## Connecting a coding agent
 
-Two forms, both backed by the same eight tools.
+Two forms, both backed by the same twelve tools.
 
 Streamable HTTP, on the port the daemon already exposes:
 
@@ -122,8 +122,11 @@ stdio, for agents that insist on spawning a process:
 }
 ```
 
-The tools are `project_list`, `adr_search`, `adr_get`, `adr_list`, `adr_submit`, `adr_similar`,
-`adr_transition` and `adr_context_for`. See [docs/API.md](docs/API.md).
+The tools are `project_list`, `project_create`, `project_delete`, `adr_search`, `adr_get`,
+`adr_list`, `adr_submit`, `adr_import`, `adr_delete`, `adr_similar`, `adr_transition` and
+`adr_context_for`. Two documents are served over MCP resources, `adrian://docs/api` and
+`adrian://docs/madr`, so an agent can read the contract without a checkout. See
+[docs/API.md](docs/API.md).
 
 ## Environment
 
