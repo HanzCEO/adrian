@@ -216,7 +216,7 @@
         "`adrian check` exits non-zero when a chunk has no chunk_vector row (asserted)",
         "No `unwrap()` outside tests in qdrant.rs, worker.rs, ingest.rs"
       ],
-      "status": "in-progress",
+      "status": "completed",
       "auditResult": null,
       "error": null,
       "criteriaStatus": [
@@ -246,7 +246,7 @@
         "No `unwrap()` outside tests in adrian-api",
         "`adrian serve` shuts down within 10s of SIGTERM (asserted by a test that spawns the binary and signals it)"
       ],
-      "status": "approved",
+      "status": "completed",
       "auditResult": null,
       "error": null,
       "criteriaStatus": [
@@ -275,7 +275,7 @@
         "The stdio proxy round-trips a request through a stub daemon and writes nothing but JSON-RPC to stdout (asserted)",
         "POST /mcp is reachable on the same port as REST and tolerates `Accept: application/json, text/event-stream` (asserted)"
       ],
-      "status": "approved",
+      "status": "completed",
       "auditResult": null,
       "error": null,
       "criteriaStatus": [
@@ -305,7 +305,7 @@
         ".github/workflows/ci.yml exists and runs fmt, clippy, both test suites, and both docker builds",
         "`cargo fmt --check` and `cargo clippy -- -D warnings` are clean on both workspaces"
       ],
-      "status": "approved",
+      "status": "in-progress",
       "auditResult": null,
       "error": null,
       "criteriaStatus": [
@@ -328,5 +328,5 @@
   "yoloMode": true,
   "yoloSessionId": "01a202d8-c507-7311-b696-fdf1ce8f38b9",
   "createdAt": 1795354227474,
-  "updatedAt": 1795358108442
+  "updatedAt": 1795358789787
 }

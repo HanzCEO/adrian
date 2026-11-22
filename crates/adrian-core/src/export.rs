@@ -223,20 +223,21 @@ pub async fn render_madr(store: &Store, adr: &Adr) -> Result<String, ExportError
 
     out.push_str(&format!("# {}\n\n", revision.title));
 
-    for section in &sections {
-        // Option sub-headings are rendered from their own sections; skip the H2 container
-        // when it has no body of its own.
-        let is_option_heading = section.kind == SectionKind::ProsCons
-            && section.option_key.is_some()
-            && section.parent.is_some();
-        let level = match section.parent {
-            Some(_) => "###",
-            None => "##",
+    // Every section is rendered, including an empty one. Dropping an empty heading would
+    // break the parent chain on re-parse (an option heading with no H2 above it stops being
+    // recognised as an option), and it would also quietly discard a section the author
+    // deliberately left blank, as the MADR bare template does.
+    for (index, section) in sections.iter().enumerate() {
+        // Reproduce the author's heading depth rather than flattening to two levels: a
+        // heading nested under an option (`#### Examples`) must not come back as an option
+        // of its own.
+        let level = match depth_of(&sections, index) {
+            0 => "##",
+            1 => "###",
+            2 => "####",
+            3 => "#####",
+            _ => "######",
         };
-
-        if section.text.trim().is_empty() && !is_option_heading {
-            continue;
-        }
 
         out.push_str(&format!("{level} {}\n\n", section.raw_heading));
 
@@ -289,6 +290,21 @@ pub async fn render_madr(store: &Store, adr: &Adr) -> Result<String, ExportError
     }
 
     Ok(out.trim_end().to_string() + "\n")
+}
+
+/// How deep a section sits below the top level.
+fn depth_of(sections: &[ParsedSection], index: usize) -> usize {
+    let mut depth = 0usize;
+    let mut current = sections.get(index).and_then(|section| section.parent);
+    // The chain is finite because a parent always has a lower ordinal.
+    while let Some(parent) = current {
+        depth += 1;
+        if depth > 8 {
+            break;
+        }
+        current = sections.get(parent).and_then(|section| section.parent);
+    }
+    depth
 }
 
 fn join_list(values: &[String]) -> String {
