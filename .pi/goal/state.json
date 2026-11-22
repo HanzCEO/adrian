@@ -188,7 +188,7 @@
         "The Dockerfile has a distinct weights stage so task-7's download is cached independently of source changes",
         "No curl or shell-based healthcheck is required at runtime; the HEALTHCHECK uses the binary's own subcommand or an installed probe"
       ],
-      "status": "in-progress",
+      "status": "completed",
       "auditResult": null,
       "error": null,
       "criteriaStatus": [
@@ -216,7 +216,7 @@
         "`adrian check` exits non-zero when a chunk has no chunk_vector row (asserted)",
         "No `unwrap()` outside tests in qdrant.rs, worker.rs, ingest.rs"
       ],
-      "status": "approved",
+      "status": "in-progress",
       "auditResult": null,
       "error": null,
       "criteriaStatus": [
@@ -328,5 +328,5 @@
   "yoloMode": true,
   "yoloSessionId": "01a202d8-c507-7311-b696-fdf1ce8f38b9",
   "createdAt": 1795354227474,
-  "updatedAt": 1795357426122
+  "updatedAt": 1795358108442
 }

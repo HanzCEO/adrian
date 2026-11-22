@@ -30,6 +30,10 @@ pub enum ApiError {
     #[error("{message}")]
     Upstream { message: String },
 
+    /// The caller did not present a valid credential.
+    #[error("{message}")]
+    Unauthorized { message: String },
+
     /// Anything else. The message is logged but still returned, because this is a
     /// self-hosted tool and hiding the reason helps nobody.
     #[error("{message}")]
@@ -69,6 +73,12 @@ impl ApiError {
         }
     }
 
+    pub fn unauthorized(message: impl Into<String>) -> Self {
+        ApiError::Unauthorized {
+            message: message.into(),
+        }
+    }
+
     pub fn internal(message: impl Into<String>) -> Self {
         ApiError::Internal {
             message: message.into(),
@@ -82,6 +92,7 @@ impl ApiError {
             ApiError::NotFound { .. } => "not_found",
             ApiError::Conflict { .. } => "conflict",
             ApiError::Upstream { .. } => "upstream_error",
+            ApiError::Unauthorized { .. } => "unauthorized",
             ApiError::Internal { .. } => "internal",
         }
     }
@@ -92,6 +103,7 @@ impl ApiError {
             ApiError::NotFound { .. } => StatusCode::NOT_FOUND,
             ApiError::Conflict { .. } => StatusCode::CONFLICT,
             ApiError::Upstream { .. } => StatusCode::BAD_GATEWAY,
+            ApiError::Unauthorized { .. } => StatusCode::UNAUTHORIZED,
             ApiError::Internal { .. } => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -138,6 +150,17 @@ impl From<adrian_core::embedder::EmbedderError> for ApiError {
 impl From<adrian_core::qdrant::QdrantError> for ApiError {
     fn from(err: adrian_core::qdrant::QdrantError) -> Self {
         ApiError::upstream(err.to_string())
+    }
+}
+
+impl From<adrian_core::export::ExportError> for ApiError {
+    fn from(err: adrian_core::export::ExportError) -> Self {
+        use adrian_core::export::ExportError;
+        match err {
+            ExportError::NotFound(message) => ApiError::not_found(message),
+            ExportError::Invalid(message) => ApiError::invalid(message),
+            ExportError::Store(inner) => ApiError::from(inner),
+        }
     }
 }
 

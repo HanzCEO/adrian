@@ -728,6 +728,26 @@ impl Store {
         .await
     }
 
+    /// Look a decision up by its display number within a project.
+    ///
+    /// Numbers are a filename artifact and may collide, so this returns the most recently
+    /// created match rather than pretending the number is a key.
+    pub async fn get_adr_by_number(&self, project_id: Uuid, number: i64) -> Result<Option<Adr>> {
+        self.read(move |conn| {
+            conn.query_row(
+                "SELECT id, project_id, external_ref, number, slug, created_at, created_by,
+                        cur_rev, cur_status
+                 FROM adr WHERE project_id = ?1 AND number = ?2
+                 ORDER BY created_at DESC LIMIT 1",
+                params![project_id, number],
+                map_adr,
+            )
+            .optional()
+            .or_store()
+        })
+        .await
+    }
+
     /// Find an ADR in the same project whose latest revision has this exact source hash.
     /// Used to recognise a rename: the bytes are identical, only the path changed.
     pub async fn find_adr_by_source_sha(
