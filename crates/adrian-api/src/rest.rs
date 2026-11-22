@@ -5,13 +5,13 @@
 
 use crate::dto::*;
 use crate::error::{ApiError, ApiResult};
-use crate::json::{ApiJson, ApiQuery};
+use crate::json::{ApiJson, ApiPath, ApiQuery};
 use crate::state::AppState;
 use adrian_core::chunker::WhitespaceTokenCounter;
 use adrian_core::export::{self, ExportFormat};
 use adrian_core::ingest::{ingest, IngestRequest};
 use adrian_core::types::*;
-use axum::extract::{Path, State};
+use axum::extract::State;
 use axum::http::StatusCode;
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -360,7 +360,7 @@ pub async fn list_adrs(
 #[tracing::instrument(name = "get_adr", skip(state))]
 pub async fn get_adr(
     State(state): State<AppState>,
-    Path(id): Path<String>,
+    ApiPath(id): ApiPath<String>,
     ApiQuery(query): ApiQuery<DetailQuery>,
 ) -> ApiResult<Json<AdrDetail>> {
     let adr_id = parse_uuid(&id)?;
@@ -451,7 +451,7 @@ pub async fn get_adr(
 #[tracing::instrument(name = "get_adr_chunks", skip(state))]
 pub async fn get_adr_chunks(
     State(state): State<AppState>,
-    Path(id): Path<String>,
+    ApiPath(id): ApiPath<String>,
 ) -> ApiResult<Json<Vec<ChunkView>>> {
     let adr_id = parse_uuid(&id)?;
     let adr = state.store.get_adr(adr_id).await?;
@@ -482,7 +482,7 @@ pub async fn get_adr_chunks(
 #[tracing::instrument(name = "transition", skip(state, request))]
 pub async fn transition(
     State(state): State<AppState>,
-    Path(id): Path<String>,
+    ApiPath(id): ApiPath<String>,
     ApiJson(request): ApiJson<TransitionRequest>,
 ) -> ApiResult<Json<TransitionResponse>> {
     let adr_id = parse_uuid(&id)?;
@@ -657,7 +657,7 @@ pub fn reciprocal_rank_fusion(lists: Vec<Vec<ScoredChunk>>) -> Vec<(Uuid, Uuid, 
 #[tracing::instrument(name = "similar", skip(state, query))]
 pub async fn similar(
     State(state): State<AppState>,
-    Path(id): Path<String>,
+    ApiPath(id): ApiPath<String>,
     ApiQuery(query): ApiQuery<SimilarQuery>,
 ) -> ApiResult<Json<SearchResponse>> {
     let adr_id = parse_uuid(&id)?;

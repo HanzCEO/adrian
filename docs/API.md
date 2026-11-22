@@ -229,6 +229,11 @@ this is an index scan.
 `format` is `json` or `madr`. With a single id, only that record is rendered. A record
 imported from Markdown and never modified is returned **verbatim**, byte for byte.
 
+A record that *has* been modified is re-rendered from its stored sections. The body of every
+section is written exactly as parsed, so a round trip through export and re-ingest reproduces
+the same projection: same headings, same section text, same items, same option keys. The
+assertion for that covers every fixture in the corpus, field by field, rather than a subset.
+
 ---
 
 ## MCP

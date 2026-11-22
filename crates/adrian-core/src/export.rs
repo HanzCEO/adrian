@@ -194,7 +194,6 @@ pub async fn export_adr_markdown(store: &Store, adr: &Adr) -> Result<String, Exp
 pub async fn render_madr(store: &Store, adr: &Adr) -> Result<String, ExportError> {
     let revision = store.get_revision(adr.id, adr.cur_rev).await?;
     let sections = store.get_sections(adr.id, adr.cur_rev).await?;
-    let items = store.get_items(adr.id, adr.cur_rev).await?;
     let events = store.list_status_events(adr.id).await?;
 
     let mut out = String::new();
@@ -241,62 +240,17 @@ pub async fn render_madr(store: &Store, adr: &Adr) -> Result<String, ExportError
 
         out.push_str(&format!("{level} {}\n\n", section.raw_heading));
 
-        match section.kind {
-            SectionKind::Options => {
-                for item in items.iter().filter(|item| item.kind == ItemKind::Option) {
-                    out.push_str(&format!("* {}\n", item.text.trim()));
-                }
-                out.push('\n');
-            }
-            SectionKind::ProsCons if section.option_key.is_some() => {
-                let key = section.option_key.as_deref().unwrap_or_default();
-                let prose = prose_only(&section.text);
-                if !prose.is_empty() {
-                    out.push_str(&prose);
-                    out.push_str("\n\n");
-                }
-                for item in items.iter().filter(|item| {
-                    item.option_key.as_deref() == Some(key)
-                        && matches!(item.kind, ItemKind::Pro | ItemKind::Con | ItemKind::Neutral)
-                }) {
-                    out.push_str(&format!("* {}\n", item.text.trim()));
-                }
-                out.push('\n');
-            }
-            SectionKind::Drivers => {
-                for item in items.iter().filter(|item| item.kind == ItemKind::Driver) {
-                    out.push_str(&format!("* {}\n", item.text.trim()));
-                }
-                out.push('\n');
-            }
-            SectionKind::Consequences => {
-                for item in items.iter().filter(|item| {
-                    matches!(
-                        item.kind,
-                        ItemKind::ConsequenceGood
-                            | ItemKind::ConsequenceBad
-                            | ItemKind::ConsequenceOther
-                    )
-                }) {
-                    out.push_str(&format!("* {}\n", item.text.trim()));
-                }
-                out.push('\n');
-            }
-            _ => {
-                // A sub-label inside an option (MADR's `#### Pros/cons`) keeps its prose but
-                // not its argument bullets: those are rendered once, under the option
-                // heading above. Emitting them here as well would duplicate every argument
-                // on the next parse.
-                let body = if section.option_key.is_some() {
-                    strip_argument_bullets(&section.text)
-                } else {
-                    section.text.trim().to_string()
-                };
-                if !body.is_empty() {
-                    out.push_str(&body);
-                    out.push_str("\n\n");
-                }
-            }
+        // The body is written exactly as parsed. Re-emitting the derived items instead was
+        // what made this lossy: an option's prose was dropped because only its bullets were
+        // written, and a sub-label's bullets were written twice because both the sub-label
+        // and the option above it emitted them. The section text already contains every
+        // bullet, every paragraph and every fenced block, so writing it verbatim reproduces
+        // the document and the items are simply re-derived on the next parse.
+        let body = section.text.trim();
+        if !body.is_empty() {
+            out.push_str(body);
+            out.push('\n');
+            out.push('\n');
         }
     }
 
@@ -332,43 +286,6 @@ fn join_list(values: &[String]) -> String {
     }
 }
 
-/// Section text with only its `Good` / `Neutral` / `Bad` bullets removed.
-///
-/// Bullets that are not arguments, such as the entries of an `#### Examples` list, are kept.
-fn strip_argument_bullets(text: &str) -> String {
-    text.lines()
-        .filter(|line| {
-            let trimmed = line.trim_start();
-            let is_bullet =
-                trimmed.starts_with("* ") || trimmed.starts_with("- ") || trimmed.starts_with("+ ");
-            if !is_bullet {
-                return true;
-            }
-            let body = trimmed
-                .trim_start_matches(['*', '-', '+'])
-                .trim_start()
-                .to_ascii_lowercase();
-            !(body.starts_with("good,") || body.starts_with("bad,") || body.starts_with("neutral,"))
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-        .trim()
-        .to_string()
-}
-
-/// Section text with its bullet lines removed, so rendering does not duplicate the items.
-fn prose_only(text: &str) -> String {
-    text.lines()
-        .filter(|line| {
-            let trimmed = line.trim_start();
-            !(trimmed.starts_with("* ") || trimmed.starts_with("- ") || trimmed.starts_with("+ "))
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-        .trim()
-        .to_string()
-}
-
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
@@ -389,12 +306,6 @@ mod tests {
         assert_eq!(ExportFormat::parse("madr").unwrap(), ExportFormat::Madr);
         assert_eq!(ExportFormat::parse("md").unwrap(), ExportFormat::Madr);
         assert!(ExportFormat::parse("pdf").is_err());
-    }
-
-    #[test]
-    fn prose_only_drops_bullets() {
-        let text = "Some prose.\n\n* Good, because yes\n* Bad, because no\n";
-        assert_eq!(prose_only(text), "Some prose.");
     }
 
     #[test]

@@ -18,7 +18,7 @@
 //! client has no rule for.
 
 use crate::error::ApiError;
-use axum::extract::rejection::{JsonRejection, QueryRejection};
+use axum::extract::rejection::{JsonRejection, PathRejection, QueryRejection};
 use axum::extract::{FromRequest, FromRequestParts, Request};
 use axum::http::request::Parts;
 use axum::Json;
@@ -61,6 +61,37 @@ where
             Ok(axum::extract::Query(value)) => Ok(ApiQuery(value)),
             Err(rejection) => Err(map_query_rejection(rejection)),
         }
+    }
+}
+
+/// A path-parameter extractor whose failures are rendered as [`ApiError`].
+///
+/// A percent-encoded path segment that is not valid UTF-8, such as `/v1/adrs/%FF`, is a
+/// client mistake. Without this wrapper axum answers it with its own plain-text
+/// `Invalid URL: Invalid UTF-8 in ...`.
+pub struct ApiPath<T>(pub T);
+
+impl<T, S> FromRequestParts<S> for ApiPath<T>
+where
+    T: DeserializeOwned + Send,
+    S: Send + Sync,
+{
+    type Rejection = ApiError;
+
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        match axum::extract::Path::<T>::from_request_parts(parts, state).await {
+            Ok(axum::extract::Path(value)) => Ok(ApiPath(value)),
+            Err(rejection) => Err(map_path_rejection(rejection)),
+        }
+    }
+}
+
+fn map_path_rejection(rejection: PathRejection) -> ApiError {
+    match rejection {
+        PathRejection::FailedToDeserializePathParams(err) => {
+            ApiError::invalid(format!("the path parameter is not valid: {err}"))
+        }
+        other => ApiError::invalid(other.body_text()),
     }
 }
 
@@ -187,6 +218,27 @@ mod tests {
     async fn a_valid_query_string_is_accepted() {
         let params = extract_query("/?limit=10").await.expect("valid");
         assert_eq!(params.limit, 10);
+    }
+
+    async fn extract_path(uri: &'static str) -> Result<String, ApiError> {
+        let request = Request::builder()
+            .uri(uri)
+            .body(Body::empty())
+            .expect("request");
+        let (mut parts, _) = request.into_parts();
+        ApiPath::<String>::from_request_parts(&mut parts, &())
+            .await
+            .map(|ApiPath(value)| value)
+    }
+
+    #[tokio::test]
+    async fn a_malformed_path_param_is_a_400_in_the_documented_shape() {
+        // `%FF` is not valid UTF-8. axum's own rejection here is plain text. The success
+        // path needs a matched route, so it is covered against the real router in
+        // tests/rest_api.rs instead of here.
+        let err = extract_path("/v1/adrs/%FF").await.expect_err("must reject");
+        assert_eq!(err.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(err.code(), "invalid_request");
     }
 
     #[tokio::test]

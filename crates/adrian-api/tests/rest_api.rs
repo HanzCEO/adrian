@@ -204,6 +204,39 @@ async fn routing_failures_use_the_documented_error_shape() {
     assert!(body["error"]["message"].is_string());
 }
 
+/// A percent-encoded path segment that is not valid UTF-8 is the last extractor that used
+/// to escape the contract. It affects every `/v1/adrs/{id}` route.
+#[tokio::test]
+async fn a_non_utf8_path_param_uses_the_documented_error_shape() {
+    let harness = Harness::new(None).await;
+
+    for uri in [
+        "/v1/adrs/%FF",
+        "/v1/adrs/%FF/chunks",
+        "/v1/adrs/%FF/similar",
+    ] {
+        let (status, body) = harness.send("GET", uri, None, None).await;
+        assert_eq!(status, 400, "{uri} should be a 400, body: {body}");
+        assert_eq!(
+            body["error"]["code"], "invalid_request",
+            "{uri} must use the documented error shape, got {body}"
+        );
+        assert!(body["error"]["message"].is_string(), "{uri}: {body}");
+    }
+
+    // A valid but unknown id is still a 404 with the documented shape.
+    let (status, body) = harness
+        .send(
+            "GET",
+            "/v1/adrs/01a20400-0000-7000-8000-000000000000",
+            None,
+            None,
+        )
+        .await;
+    assert_eq!(status, 404);
+    assert_eq!(body["error"]["code"], "not_found");
+}
+
 #[tokio::test]
 async fn bearer_auth_is_enforced_when_configured() {
     let harness = Harness::new(Some("secret")).await;

@@ -95,36 +95,66 @@ async fn ingest_all(store: &Store, project: &Project, fixtures: &[(String, Vec<u
 }
 
 /// `(kind, text)` pairs, whitespace-normalised.
-type Pairs = Vec<(String, String)>;
+/// One section reduced to the fields that carry meaning.
+///
+/// Byte offsets and ordinals are excluded because the renderer legitimately chooses its own
+/// whitespace and re-derives positions. Everything else is included: a heading that comes
+/// back with a different depth, an option key that stops matching, or a parent that points
+/// somewhere else are all real losses, not formatting.
+#[derive(Debug, PartialEq)]
+struct SectionView {
+    kind: String,
+    heading: String,
+    text: String,
+    option_key: Option<String>,
+    parent: Option<usize>,
+}
 
-/// A projection reduced to the fields that carry meaning, so that byte offsets and
-/// ordinals do not make the comparison brittle to whitespace the renderer chose.
-fn comparable(adr: &ParsedAdr) -> (String, Pairs, Pairs) {
-    let sections = adr
-        .sections
-        .iter()
-        .map(|section| {
-            (
-                section.kind.as_str().to_string(),
-                section
-                    .text
-                    .split_whitespace()
-                    .collect::<Vec<_>>()
-                    .join(" "),
-            )
-        })
-        .collect();
-    let items = adr
-        .items
-        .iter()
-        .map(|item| {
-            (
-                item.kind.as_str().to_string(),
-                item.text.split_whitespace().collect::<Vec<_>>().join(" "),
-            )
-        })
-        .collect();
-    (adr.title.clone(), sections, items)
+/// One item reduced to the fields that carry meaning.
+#[derive(Debug, PartialEq)]
+struct ItemView {
+    kind: String,
+    text: String,
+    option_key: Option<String>,
+}
+
+#[derive(Debug, PartialEq)]
+struct Projection {
+    title: String,
+    template: String,
+    sections: Vec<SectionView>,
+    items: Vec<ItemView>,
+}
+
+fn squash(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn comparable(adr: &ParsedAdr) -> Projection {
+    Projection {
+        title: adr.title.clone(),
+        template: adr.template.as_str().to_string(),
+        sections: adr
+            .sections
+            .iter()
+            .map(|section| SectionView {
+                kind: section.kind.as_str().to_string(),
+                heading: section.raw_heading.trim().to_string(),
+                text: squash(&section.text),
+                option_key: section.option_key.clone(),
+                parent: section.parent,
+            })
+            .collect(),
+        items: adr
+            .items
+            .iter()
+            .map(|item| ItemView {
+                kind: item.kind.as_str().to_string(),
+                text: squash(&item.text),
+                option_key: item.option_key.clone(),
+            })
+            .collect(),
+    }
 }
 
 #[tokio::test]
@@ -133,6 +163,7 @@ async fn rendering_and_reparsing_preserves_the_projection() {
     let fixtures = fixtures();
     let ids = ingest_all(&store, &project, &fixtures).await;
 
+    let mut compared = 0usize;
     for (index, id) in ids.iter().enumerate() {
         let name = &fixtures[index].0;
         let adr = store.get_adr(*id).await.expect("adr");
@@ -143,40 +174,69 @@ async fn rendering_and_reparsing_preserves_the_projection() {
         let reparsed = parser::parse(rendered.as_bytes());
         let original = parser::parse(&fixtures[index].1);
 
-        let (title_a, sections_a, items_a) = comparable(&original);
-        let (title_b, sections_b, items_b) = comparable(&reparsed);
+        let before = comparable(&original);
+        let after = comparable(&reparsed);
 
-        assert_eq!(title_a, title_b, "{name}: the title changed on round trip");
-
-        // The rendered document carries the same semantic sections, in the same order.
-        let kinds_a: Vec<&String> = sections_a.iter().map(|(kind, _)| kind).collect();
-        let kinds_b: Vec<&String> = sections_b.iter().map(|(kind, _)| kind).collect();
+        // The whole projection, field by field. A subset comparison is what let content
+        // loss through before: section text was not compared, so a renderer that dropped
+        // an option's prose still "passed".
         assert_eq!(
-            kinds_a, kinds_b,
-            "{name}: section kinds changed on round trip"
+            before.sections.len(),
+            after.sections.len(),
+            "{name}: section count changed on round trip\nrendered:\n{rendered}"
         );
+        for (ordinal, (a, b)) in before
+            .sections
+            .iter()
+            .zip(after.sections.iter())
+            .enumerate()
+        {
+            assert_eq!(
+                a.kind, b.kind,
+                "{name}: section {ordinal} ({:?}) kind changed on round trip",
+                a.heading
+            );
+            assert_eq!(
+                a.heading, b.heading,
+                "{name}: section {ordinal} heading changed on round trip"
+            );
+            assert_eq!(
+                a.text, b.text,
+                "{name}: section {ordinal} ({:?}) text changed on round trip\nrendered:\n{rendered}",
+                a.heading
+            );
+            assert_eq!(
+                a.option_key, b.option_key,
+                "{name}: section {ordinal} ({:?}) option key changed on round trip",
+                a.heading
+            );
+            // A parent index is only comparable when the section count is unchanged, which
+            // is already asserted above.
+            assert_eq!(
+                a.parent.is_some(),
+                b.parent.is_some(),
+                "{name}: section {ordinal} ({:?}) lost or gained a parent",
+                a.heading
+            );
+        }
 
-        // Every option survives, with its arguments still attached to it.
-        let options_a: Vec<&String> = original
-            .items_of(ItemKind::Option)
-            .map(|item| &item.text)
-            .collect();
-        let options_b: Vec<&String> = reparsed
-            .items_of(ItemKind::Option)
-            .map(|item| &item.text)
-            .collect();
         assert_eq!(
-            options_a, options_b,
-            "{name}: options changed on round trip"
+            before.items.len(),
+            after.items.len(),
+            "{name}: item count changed on round trip\nrendered:\n{rendered}"
         );
+        for (ordinal, (a, b)) in before.items.iter().zip(after.items.iter()).enumerate() {
+            assert_eq!(
+                a, b,
+                "{name}: item {ordinal} changed on round trip\nrendered:\n{rendered}"
+            );
+        }
 
-        let pros_a = items_a.iter().filter(|(kind, _)| kind == "pro").count();
-        let pros_b = items_b.iter().filter(|(kind, _)| kind == "pro").count();
-        assert_eq!(
-            pros_a, pros_b,
-            "{name}: pro arguments changed on round trip"
-        );
+        assert_eq!(before.title, after.title, "{name}: title changed");
+        compared += 1;
     }
+
+    assert_eq!(compared, fixtures.len(), "every fixture should be compared");
 }
 
 #[tokio::test]
