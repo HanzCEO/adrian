@@ -4,7 +4,7 @@ use crate::config::Config;
 use adrian_core::chunker::WhitespaceTokenCounter;
 use adrian_core::embedder::EmbedderClient;
 use adrian_core::export::{self, ExportFormat};
-use adrian_core::ingest::{ingest, IngestAction, IngestRequest};
+use adrian_core::ingest::{ingest, IngestRequest};
 use adrian_core::qdrant::QdrantClient;
 use adrian_core::store::Store;
 use adrian_core::types::*;
