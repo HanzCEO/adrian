@@ -340,7 +340,10 @@ fn slugify(title: &str, rev: i64) -> String {
 }
 
 /// Pull a leading number out of a filename-like reference, e.g. `docs/adr/0042-use-x.md`.
-fn number_from_ref(external_ref: &str) -> Option<i64> {
+///
+/// Public because `adrian import --dry-run` reports the number a file would get without
+/// duplicating the rule, and a preview that disagrees with the ingest is worse than none.
+pub fn number_from_ref(external_ref: &str) -> Option<i64> {
     let file = external_ref.rsplit('/').next()?;
     let digits: String = file.chars().take_while(|c| c.is_ascii_digit()).collect();
     if digits.is_empty() {

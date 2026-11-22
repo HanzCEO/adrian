@@ -257,6 +257,31 @@ impl QdrantClient {
         Ok(())
     }
 
+    /// Delete every point belonging to one project.
+    ///
+    /// The point payload carries `project_id`, so this is a filtered delete rather than a
+    /// list of ids: a project delete must not have to enumerate chunks that SQLite is
+    /// about to forget. Used by `adrian project rm`.
+    pub async fn delete_points_for_project(
+        &self,
+        collection: &str,
+        project_id: Uuid,
+    ) -> Result<()> {
+        let url = format!("{}/collections/{collection}/points/delete", self.base_url);
+        let body = json!({
+            "filter": {
+                "must": [ { "key": "project_id", "match": { "value": project_id.to_string() } } ]
+            }
+        });
+        let response = self.send(self.http.post(&url).json(&body)).await?;
+        if !response.status().is_success() {
+            let status = response.status().as_u16();
+            let body = response.text().await.unwrap_or_default();
+            return Err(QdrantError::Status { status, body });
+        }
+        Ok(())
+    }
+
     /// Patch the cached status on every point of one ADR.
     ///
     /// The status in the payload is a cache for filtering, not the truth. SQLite is the

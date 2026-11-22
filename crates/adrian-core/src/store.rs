@@ -65,6 +65,20 @@ impl<T> OrStore<T> for rusqlite::Result<T> {
 /// The schema version this build expects.
 pub const SCHEMA_VERSION: i64 = 1;
 
+/// What a project holds, counted before and after a delete.
+///
+/// It is returned by both the preview and the delete so that an operator sees the same
+/// numbers whether they were asking or committing, and so a test can assert the delete
+/// took everything the preview promised.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ProjectFootprint {
+    pub adrs: i64,
+    pub revisions: i64,
+    pub chunks: i64,
+    pub vectors: i64,
+    pub embed_jobs: i64,
+}
+
 const MIGRATION_0001: &str = include_str!("../../../migrations/0001_init.sql");
 
 /// A handle to the database.
@@ -369,6 +383,151 @@ impl Store {
         })
         .await
     }
+
+    /// Count what a project holds, without touching it.
+    ///
+    /// The same numbers come back from [`Store::delete_project`], so a preview and the
+    /// commit agree by construction rather than by two queries that drifted apart.
+    pub async fn project_footprint(&self, project_id: Uuid) -> Result<ProjectFootprint> {
+        self.read(move |conn| footprint_sync(conn, project_id))
+            .await
+    }
+
+    /// Delete a project and everything that belongs to it.
+    ///
+    /// A project delete has to reach eleven tables and the full-text index, in an order
+    /// the foreign keys allow. `PRAGMA foreign_keys = ON` is set per connection and the
+    /// schema declares references on `adr`, `adr_rev`, `section`, `chunk_vector` and
+    /// `status_event`, so deleting the project row first would simply fail. The whole thing
+    /// runs inside one transaction, because a half-deleted project is worse than an
+    /// undeleted one.
+    ///
+    /// Vector points in Qdrant are the caller's problem. This function cannot reach the
+    /// index, so it returns the footprint and the caller removes the points.
+    pub async fn delete_project(&self, project_id: Uuid) -> Result<ProjectFootprint> {
+        self.write(move |conn| {
+            conn.execute_batch("BEGIN IMMEDIATE;")?;
+            match delete_project_sync(conn, project_id) {
+                Ok(footprint) => {
+                    conn.execute_batch("COMMIT;")?;
+                    Ok(footprint)
+                }
+                Err(err) => {
+                    let _ = conn.execute_batch("ROLLBACK;");
+                    Err(err)
+                }
+            }
+        })
+        .await
+    }
+}
+
+/// The `adr_id` subquery every cascade step keys on.
+const PROJECT_ADRS: &str = "SELECT id FROM adr WHERE project_id = ?1";
+
+fn footprint_sync(conn: &Connection, project_id: Uuid) -> Result<ProjectFootprint> {
+    let count = |sql: &str| -> Result<i64> {
+        conn.query_row(sql, params![project_id], |row| row.get::<_, i64>(0))
+            .or_store()
+    };
+    Ok(ProjectFootprint {
+        adrs: count("SELECT COUNT(*) FROM adr WHERE project_id = ?1")?,
+        revisions: count(&format!(
+            "SELECT COUNT(*) FROM adr_rev WHERE adr_id IN ({PROJECT_ADRS})"
+        ))?,
+        chunks: count(&format!(
+            "SELECT COUNT(*) FROM chunk WHERE adr_id IN ({PROJECT_ADRS})"
+        ))?,
+        vectors: count(&format!(
+            "SELECT COUNT(*) FROM chunk_vector WHERE chunk_id IN \
+             (SELECT id FROM chunk WHERE adr_id IN ({PROJECT_ADRS}))"
+        ))?,
+        embed_jobs: count(&format!(
+            "SELECT COUNT(*) FROM embed_job WHERE chunk_id IN \
+             (SELECT id FROM chunk WHERE adr_id IN ({PROJECT_ADRS}))"
+        ))?,
+    })
+}
+
+fn delete_project_sync(conn: &Connection, project_id: Uuid) -> Result<ProjectFootprint> {
+    let exists = conn
+        .query_row(
+            "SELECT 1 FROM project WHERE id = ?1",
+            params![project_id],
+            |_| Ok(()),
+        )
+        .optional()
+        .or_store()?
+        .is_some();
+    if !exists {
+        return Err(StoreError::NotFound(format!("project {project_id}")));
+    }
+
+    let footprint = footprint_sync(conn, project_id)?;
+
+    // FTS5 cannot take a BLOB primary key as its rowid, so the index is keyed on the
+    // chunk table's implicit rowid. Deleting chunk rows without this step would leave
+    // search hits pointing at rows that no longer exist.
+    conn.execute(
+        &format!(
+            "DELETE FROM chunk_fts WHERE rowid IN \
+             (SELECT c.rowid FROM chunk c WHERE c.adr_id IN ({PROJECT_ADRS}))"
+        ),
+        params![project_id],
+    )?;
+    conn.execute(
+        &format!(
+            "DELETE FROM chunk_vector WHERE chunk_id IN \
+             (SELECT id FROM chunk WHERE adr_id IN ({PROJECT_ADRS}))"
+        ),
+        params![project_id],
+    )?;
+    conn.execute(
+        &format!(
+            "DELETE FROM embed_job WHERE chunk_id IN \
+             (SELECT id FROM chunk WHERE adr_id IN ({PROJECT_ADRS}))"
+        ),
+        params![project_id],
+    )?;
+    conn.execute(
+        &format!("DELETE FROM item WHERE adr_id IN ({PROJECT_ADRS})"),
+        params![project_id],
+    )?;
+    conn.execute(
+        &format!("DELETE FROM section WHERE adr_id IN ({PROJECT_ADRS})"),
+        params![project_id],
+    )?;
+    conn.execute(
+        &format!("DELETE FROM chunk WHERE adr_id IN ({PROJECT_ADRS})"),
+        params![project_id],
+    )?;
+    conn.execute(
+        &format!("DELETE FROM status_event WHERE adr_id IN ({PROJECT_ADRS})"),
+        params![project_id],
+    )?;
+    conn.execute(
+        &format!("DELETE FROM scope WHERE adr_id IN ({PROJECT_ADRS})"),
+        params![project_id],
+    )?;
+    conn.execute(
+        &format!("DELETE FROM technology WHERE adr_id IN ({PROJECT_ADRS})"),
+        params![project_id],
+    )?;
+    conn.execute(
+        &format!("DELETE FROM adr_rev WHERE adr_id IN ({PROJECT_ADRS})"),
+        params![project_id],
+    )?;
+    conn.execute(
+        &format!("DELETE FROM adr WHERE id IN ({PROJECT_ADRS})"),
+        params![project_id],
+    )?;
+    conn.execute(
+        "DELETE FROM ingest_request WHERE project_id = ?1",
+        params![project_id],
+    )?;
+    conn.execute("DELETE FROM project WHERE id = ?1", params![project_id])?;
+
+    Ok(footprint)
 }
 
 fn ensure_default_workspace_sync(conn: &Connection) -> Result<Uuid> {
@@ -2249,5 +2408,231 @@ mod tests {
             .await
             .unwrap();
         assert!(missing.is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // Project deletion
+    // -----------------------------------------------------------------------
+
+    /// A revision whose section and chunk ids are unique to `(adr_id, rev)`.
+    ///
+    /// [`sample_revision`] reuses one deterministic chunk id, which is fine for a single
+    /// revision and impossible for a corpus with a superseded revision in it.
+    fn revision_for(project: &Project, adr_id: Uuid, rev: i64, seed: &str) -> NewRevision {
+        let mut revision = sample_revision(project, adr_id, &format!("tokio runtime {seed}"));
+        revision.rev = rev;
+        revision.create_adr = rev == 1;
+        revision.external_ref = format!("docs/adr/{seed}.md");
+        revision.slug = format!("adr-{seed}");
+        revision.number = Some(rev);
+        revision.sections[0].id = Uuid::new_v5(
+            &Uuid::NAMESPACE_OID,
+            format!("section-{adr_id}-{rev}").as_bytes(),
+        );
+        let section_id = revision.sections[0].id;
+        for (ordinal, chunk) in revision.chunks.iter_mut().enumerate() {
+            chunk.id = Uuid::new_v5(
+                &Uuid::NAMESPACE_OID,
+                format!("chunk-{adr_id}-{rev}-{ordinal}").as_bytes(),
+            );
+            chunk.ordinal = ordinal;
+            chunk.section_id = Some(section_id);
+        }
+        revision
+    }
+
+    const EVERY_TABLE: [&str; 13] = [
+        "project",
+        "adr",
+        "adr_rev",
+        "section",
+        "item",
+        "chunk",
+        "chunk_fts",
+        "chunk_vector",
+        "status_event",
+        "scope",
+        "technology",
+        "embed_job",
+        "ingest_request",
+    ];
+
+    /// Row counts for every table the cascade touches, so a delete can be checked as a
+    /// whole rather than one table at a time.
+    async fn table_counts(store: &Store) -> Vec<(&'static str, i64)> {
+        store
+            .read(|conn| {
+                let mut out = Vec::new();
+                for table in EVERY_TABLE {
+                    let count: i64 =
+                        conn.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                            row.get(0)
+                        })?;
+                    out.push((table, count));
+                }
+                Ok(out)
+            })
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn deleting_a_project_removes_every_row_and_leaves_others_alone() {
+        let store = fresh_store().await;
+        let workspace = store.ensure_default_workspace().await.unwrap();
+
+        let mut demo = sample_project();
+        demo.workspace_id = workspace;
+        demo.slug = "demo".to_string();
+        store.create_project(demo.clone()).await.unwrap();
+
+        let mut other = sample_project();
+        other.id = Uuid::now_v7();
+        other.workspace_id = workspace;
+        other.slug = "other".to_string();
+        store.create_project(other.clone()).await.unwrap();
+
+        // demo holds one ADR at revision 2 and one at revision 1, so the cascade has to
+        // clear a superseded revision as well as the current ones.
+        let first = Uuid::now_v7();
+        store
+            .insert_adr_with_revision(revision_for(&demo, first, 1, "0001"))
+            .await
+            .unwrap();
+        store.close_previous_revision(first, 1).await.unwrap();
+        store
+            .insert_adr_with_revision(revision_for(&demo, first, 2, "0001"))
+            .await
+            .unwrap();
+        let second = Uuid::now_v7();
+        store
+            .insert_adr_with_revision(revision_for(&demo, second, 1, "0002"))
+            .await
+            .unwrap();
+
+        // The other project keeps one ADR, so "untouched" is not vacuously true.
+        let keeper = Uuid::now_v7();
+        store
+            .insert_adr_with_revision(revision_for(&other, keeper, 1, "0001"))
+            .await
+            .unwrap();
+
+        let chunks = store.list_chunks(first, 2).await.unwrap();
+        store
+            .record_chunk_vector(
+                chunks[0].id,
+                crate::EMBED_MODEL.to_string(),
+                crate::EMBED_VERSION,
+                "test".to_string(),
+                Uuid::now_v7(),
+                4,
+                true,
+            )
+            .await
+            .unwrap();
+        store
+            .store_ingest_response(demo.id, "key-1".to_string(), [3u8; 32], "{}".to_string())
+            .await
+            .unwrap();
+
+        let before = store.project_footprint(demo.id).await.unwrap();
+        assert_eq!(before.adrs, 2);
+        assert_eq!(
+            before.revisions, 3,
+            "one superseded revision plus two current ones"
+        );
+        assert_eq!(before.chunks, 3);
+        assert_eq!(before.vectors, 1);
+        // Three chunks were written, but superseding revision 1 cancelled its queued job,
+        // so only the two current revisions still have work pending.
+        assert_eq!(before.embed_jobs, 2);
+
+        let hits = store
+            .search_lexical(demo.id, "tokio".to_string(), 10)
+            .await
+            .unwrap();
+        assert!(
+            !hits.is_empty(),
+            "the corpus should be searchable before the delete"
+        );
+
+        let deleted = store.delete_project(demo.id).await.unwrap();
+        assert_eq!(deleted, before, "the delete must report what it removed");
+
+        assert!(store
+            .get_project_by_slug("demo".to_string())
+            .await
+            .unwrap()
+            .is_none());
+        assert!(store
+            .list_adrs(demo.id, None, 100, 0)
+            .await
+            .unwrap()
+            .is_empty());
+        assert!(
+            store
+                .search_lexical(demo.id, "tokio".to_string(), 10)
+                .await
+                .unwrap()
+                .is_empty(),
+            "the full-text index must not keep the deleted project's chunks"
+        );
+
+        // What survives is exactly the other project's single ADR, in every table.
+        let expected = vec![
+            ("project", 1),
+            ("adr", 1),
+            ("adr_rev", 1),
+            ("section", 1),
+            ("item", 0),
+            ("chunk", 1),
+            ("chunk_fts", 1),
+            ("chunk_vector", 0),
+            ("status_event", 1),
+            ("scope", 1),
+            ("technology", 1),
+            ("embed_job", 1),
+            ("ingest_request", 0),
+        ];
+        assert_eq!(table_counts(&store).await, expected);
+
+        // And the survivor is still readable and searchable.
+        let survivor = store.get_adr(keeper).await.unwrap();
+        assert_eq!(survivor.project_id, other.id);
+        assert!(!store
+            .search_lexical(other.id, "tokio".to_string(), 10)
+            .await
+            .unwrap()
+            .is_empty());
+    }
+
+    #[tokio::test]
+    async fn deleting_an_unknown_project_is_not_found_and_changes_nothing() {
+        let (store, project, _) = seeded().await;
+        let before = table_counts(&store).await;
+
+        let err = store.delete_project(Uuid::now_v7()).await.unwrap_err();
+        assert!(matches!(err, StoreError::NotFound(_)), "got {err:?}");
+        assert_eq!(table_counts(&store).await, before);
+
+        // The real project is still there, so the failure was not a partial cascade.
+        assert!(store
+            .get_project_by_slug(project.slug.clone())
+            .await
+            .unwrap()
+            .is_some());
+    }
+
+    #[tokio::test]
+    async fn a_project_with_nothing_in_it_still_deletes() {
+        let store = fresh_store().await;
+        let workspace = store.ensure_default_workspace().await.unwrap();
+        let mut project = sample_project();
+        project.workspace_id = workspace;
+        store.create_project(project.clone()).await.unwrap();
+
+        let footprint = store.delete_project(project.id).await.unwrap();
+        assert_eq!(footprint, ProjectFootprint::default());
+        assert!(store.list_projects().await.unwrap().is_empty());
     }
 }

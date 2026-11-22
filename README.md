@@ -74,7 +74,10 @@ vector yet.
 ```bash
 adrian serve                                       # the daemon that compose runs
 adrian mcp-stdio --url http://127.0.0.1:38922      # stdin proxy for agents that spawn a process
+adrian project add --slug demo --name Demo         # create a project
+adrian import --project demo --dir docs/adr        # bootstrap a corpus from Markdown
 adrian export --project demo --format madr --out decisions.md
+adrian project rm --slug demo --force              # delete a project and everything in it
 adrian migrate                                     # apply pending migrations, then exit
 adrian check                                       # compare SQLite against the vector index
 ```
@@ -82,9 +85,19 @@ adrian check                                       # compare SQLite against the 
 `export` writes one file, or stdout when `--out` is absent. `check` reports only, because a
 reconcile that silently fixes things hides the bug that caused the drift.
 
+`import` is the bootstrap path for a corpus that already exists. Each document keeps the
+status its own front matter declares, which is why it is an operator command rather than a
+tool an agent can call. A second run over unchanged files reports every file as `unchanged`
+and enqueues no work. An interrupted import can therefore be run again as it is.
+`--dry-run` parses the whole corpus and reports what would land, including duplicate
+display numbers, without writing anything.
+
+Removing a project needs `--force`. The vector index is cleared before the database. Stop
+the daemon first so the embed worker cannot race the deletion.
+
 ## Connecting a coding agent
 
-Two forms, both backed by the same seven tools.
+Two forms, both backed by the same eight tools.
 
 Streamable HTTP, on the port the daemon already exposes:
 

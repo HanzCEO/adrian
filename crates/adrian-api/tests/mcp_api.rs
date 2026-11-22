@@ -1,4 +1,4 @@
-//! The MCP surface: protocol behaviour and the seven tools.
+//! The MCP surface: protocol behaviour and the eight tools.
 
 mod common;
 
@@ -50,14 +50,22 @@ async fn notifications_get_no_body() {
 }
 
 #[tokio::test]
-async fn tools_list_advertises_all_seven_tools() {
+async fn tools_list_advertises_all_eight_tools() {
     let harness = Harness::new(None).await;
     let (status, body) = harness
         .mcp(json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list" }))
         .await;
     assert_eq!(status, 200);
     let tools = body["result"]["tools"].as_array().expect("tools");
-    assert_eq!(tools.len(), 7);
+    assert_eq!(tools.len(), 8);
+    let names: Vec<&str> = tools
+        .iter()
+        .filter_map(|tool| tool["name"].as_str())
+        .collect();
+    assert!(
+        names.contains(&"project_list"),
+        "project_list is how a caller learns the slugs, got {names:?}"
+    );
     for tool in tools {
         assert!(tool["description"].as_str().is_some_and(|d| !d.is_empty()));
         assert!(tool["inputSchema"].is_object());
@@ -397,6 +405,68 @@ async fn adr_list_and_adr_get_work_through_the_tools() {
     let payload = tool_text(&got);
     assert_eq!(payload["title"], "Use tokio as the async runtime");
     assert!(!payload["sections"].as_array().expect("sections").is_empty());
+
+    // Chunks come back with the detail, so a caller can see the sections were chunked
+    // without a second tool call.
+    let chunks = payload["chunks"].as_array().expect("chunks");
+    assert!(!chunks.is_empty(), "a submitted decision always has chunks");
+    assert!(
+        chunks.iter().any(|chunk| chunk["kind"] == "document"),
+        "every decision has a document chunk, got {chunks:?}"
+    );
+    for chunk in chunks {
+        assert!(chunk["id"].as_str().is_some());
+        assert!(chunk["ordinal"].is_u64());
+        assert!(chunk["text"].as_str().is_some());
+        assert!(chunk["truncated"].is_boolean());
+        // Nothing has embedded yet, because no worker runs in this harness.
+        assert_eq!(
+            chunk["embedded"], false,
+            "an unembedded chunk must say so, got {chunk}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn project_list_is_empty_before_anything_exists_and_names_slugs_afterwards() {
+    let harness = Harness::new(None).await;
+
+    let empty = call(&harness, "project_list", json!({})).await;
+    assert_eq!(
+        empty["result"]["isError"], false,
+        "no project is not an error"
+    );
+    let payload = tool_text(&empty);
+    assert_eq!(
+        payload["projects"].as_array().expect("projects").len(),
+        0,
+        "an empty database should report an empty list, got {payload}"
+    );
+
+    harness.create_project("demo").await;
+    harness.create_project("other").await;
+    call(
+        &harness,
+        "adr_submit",
+        json!({
+            "project": "demo",
+            "external_ref": "docs/adr/0001.md",
+            "source": SAMPLE_ADR,
+            "actor": "human:test"
+        }),
+    )
+    .await;
+
+    let listed = call(&harness, "project_list", json!({})).await;
+    let payload = tool_text(&listed);
+    let projects = payload["projects"].as_array().expect("projects");
+    assert_eq!(projects.len(), 2, "both projects should be listed");
+    assert_eq!(projects[0]["slug"], "demo");
+    assert_eq!(projects[0]["adr_count"], 1);
+    assert!(projects[0]["id"].as_str().is_some());
+    assert!(projects[0]["created_at"].as_str().is_some());
+    assert_eq!(projects[1]["slug"], "other");
+    assert_eq!(projects[1]["adr_count"], 0);
 }
 
 #[tokio::test]

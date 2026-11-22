@@ -110,17 +110,7 @@ pub async fn create_project(
     ApiJson(request): ApiJson<CreateProjectRequest>,
 ) -> ApiResult<(StatusCode, Json<ProjectResponse>)> {
     let slug = request.slug.trim();
-    if slug.is_empty() {
-        return Err(ApiError::invalid("`slug` must not be empty"));
-    }
-    if !slug
-        .chars()
-        .all(|c| c.is_alphanumeric() || matches!(c, '-' | '_' | '/' | '.'))
-    {
-        return Err(ApiError::invalid(
-            "`slug` may contain letters, digits, `-`, `_`, `/` and `.`",
-        ));
-    }
+    adrian_core::types::validate_project_slug(slug).map_err(ApiError::invalid)?;
     if state
         .store
         .get_project_by_slug(slug.to_string())

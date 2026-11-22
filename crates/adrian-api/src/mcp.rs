@@ -2,7 +2,7 @@
 //!
 //! The transport is the streamable-HTTP subset that coding agents actually use: one
 //! JSON-RPC request per POST, a single JSON response, and batch arrays processed in order.
-//! No SSE streaming, because none of the seven tools produces partial results.
+//! No SSE streaming, because none of the eight tools produces partial results.
 //!
 //! Tool failures are reported as `isError: true` inside a successful response, which is the
 //! MCP convention. Only protocol-level problems become JSON-RPC errors.
@@ -189,10 +189,22 @@ fn tool_result(text: &str, is_error: bool) -> Value {
     })
 }
 
-/// The seven tools, with descriptions written for a model rather than for a human reading
+/// The eight tools, with descriptions written for a model rather than for a human reading
 /// a reference page: each one says when to reach for it.
 fn tool_catalogue() -> Vec<Value> {
     vec![
+        json!({
+            "name": "project_list",
+            "description": "List the projects that exist, with their slug and decision count. \
+                            Call this when another tool said `project` is required because \
+                            more than one project exists.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "limit": { "type": "integer", "default": 50, "minimum": 1, "maximum": 200 }
+                }
+            }
+        }),
         json!({
             "name": "adr_search",
             "description": "Search architectural decisions by natural language; returns the \
@@ -305,6 +317,7 @@ async fn call_tool(state: &AppState, name: &str, arguments: Value) -> Result<Str
         "adr_similar" => tool_similar(state, arguments).await,
         "adr_transition" => tool_transition(state, arguments).await,
         "adr_context_for" => tool_context(state, arguments).await,
+        "project_list" => tool_project_list(state, arguments).await,
         other => Err(format!("unknown tool `{other}`")),
     }
 }
@@ -354,6 +367,33 @@ async fn resolve_project(state: &AppState, slug: Option<String>) -> Result<Proje
             }
         }
     }
+}
+
+async fn tool_project_list(state: &AppState, arguments: Value) -> Result<String, String> {
+    let limit = int_arg(&arguments, "limit", 50, 200);
+    let projects = state
+        .store
+        .list_projects()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    // An empty list is an answer, not a failure: a caller has to be able to tell "no
+    // project exists yet" apart from "the daemon is unreachable".
+    let out = projects
+        .into_iter()
+        .take(limit)
+        .map(|(project, adr_count)| {
+            json!({
+                "id": project.id.to_string(),
+                "slug": project.slug,
+                "name": project.name,
+                "adr_count": adr_count,
+                "created_at": rfc3339(project.created_at),
+            })
+        })
+        .collect::<Vec<_>>();
+
+    Ok(render(&json!({ "projects": out })))
 }
 
 async fn tool_search(state: &AppState, arguments: Value) -> Result<String, String> {
@@ -439,6 +479,35 @@ async fn tool_get(state: &AppState, arguments: Value) -> Result<String, String> 
         .list_status_events(adr.id)
         .await
         .map_err(|e| e.to_string())?;
+    let chunks = state
+        .store
+        .list_chunks(adr.id, adr.cur_rev)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    // Whether a chunk has a vector yet is the only way a caller can tell an ingest that
+    // landed from one that is still waiting on the embed worker.
+    let mut chunk_views = Vec::with_capacity(chunks.len());
+    for chunk in &chunks {
+        let embedded = state
+            .store
+            .chunk_embedded(
+                chunk.id,
+                state.settings.embed_model.clone(),
+                state.settings.embed_version,
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+        chunk_views.push(json!({
+            "id": chunk.id.to_string(),
+            "kind": chunk.kind.as_str(),
+            "ordinal": chunk.ordinal,
+            "text": chunk.text,
+            "token_count": chunk.token_count,
+            "truncated": chunk.truncated,
+            "embedded": embedded,
+        }));
+    }
 
     Ok(render(&json!({
         "adr_id": adr.id.to_string(),
@@ -474,6 +543,7 @@ async fn tool_get(state: &AppState, arguments: Value) -> Result<String, String> 
             "actor": event.actor,
             "reason": event.reason,
         })).collect::<Vec<_>>(),
+        "chunks": chunk_views,
     })))
 }
 
@@ -742,7 +812,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_catalogue_advertises_all_seven_tools_with_descriptions() {
+    fn the_catalogue_advertises_all_eight_tools_with_descriptions() {
         let tools = tool_catalogue();
         let names: Vec<&str> = tools
             .iter()
@@ -751,6 +821,7 @@ mod tests {
         assert_eq!(
             names,
             vec![
+                "project_list",
                 "adr_search",
                 "adr_get",
                 "adr_list",

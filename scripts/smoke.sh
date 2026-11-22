@@ -187,7 +187,8 @@ curl -fsS -X POST "${BASE}/mcp" -H 'content-type: application/json' \
 import json, sys
 d = json.load(sys.stdin)
 tools = d["result"]["tools"]
-assert len(tools) == 7, f"expected 7 tools, got {len(tools)}"
+assert len(tools) == 8, f"expected 8 tools, got {len(tools)}"
+assert any(t["name"] == "project_list" for t in tools), "project_list is missing"
 ' || fail "MCP tools/list failed"
 
 echo ""

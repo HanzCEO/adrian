@@ -749,6 +749,25 @@ fn strip_trailing_url_parenthetical(input: &str) -> String {
     }
 }
 
+/// Check a project slug against the rules the REST surface and the CLI both enforce.
+///
+/// It lives here rather than in either caller so that `adrian project add` and
+/// `POST /v1/projects` cannot drift apart on what a slug may contain. The messages are
+/// part of the contract: they are what a client sees in the error body.
+pub fn validate_project_slug(slug: &str) -> Result<(), String> {
+    let slug = slug.trim();
+    if slug.is_empty() {
+        return Err("`slug` must not be empty".to_string());
+    }
+    if !slug
+        .chars()
+        .all(|c| c.is_alphanumeric() || matches!(c, '-' | '_' | '/' | '.'))
+    {
+        return Err("`slug` may contain letters, digits, `-`, `_`, `/` and `.`".to_string());
+    }
+    Ok(())
+}
+
 /// Replace typographic quotes and dashes with their ASCII equivalents.
 ///
 /// Authors mix these freely and MADR's own corpus contains both forms for the same option,
@@ -862,6 +881,24 @@ mod tests {
         );
         assert_eq!(Status::parse_loose("decided"), Some(Status::Accepted));
         assert_eq!(Status::parse_loose("we will see"), None);
+    }
+
+    #[test]
+    fn project_slug_rules_accept_paths_and_reject_nonsense() {
+        for slug in ["demo", "acme/billing", "a_b.c", "  demo  "] {
+            assert!(
+                validate_project_slug(slug).is_ok(),
+                "{slug} should be valid"
+            );
+        }
+        assert_eq!(
+            validate_project_slug("   ").unwrap_err(),
+            "`slug` must not be empty"
+        );
+        assert_eq!(
+            validate_project_slug("demo project").unwrap_err(),
+            "`slug` may contain letters, digits, `-`, `_`, `/` and `.`"
+        );
     }
 
     #[test]

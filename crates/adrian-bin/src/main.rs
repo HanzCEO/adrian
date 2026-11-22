@@ -42,6 +42,65 @@ enum Command {
     Migrate,
     /// Check SQLite against the vector index and report discrepancies.
     Check,
+    /// Create or remove a project.
+    ///
+    /// Bootstrapping a project is an operator act, which is why it lives here rather than
+    /// on the MCP surface that coding agents talk to.
+    Project {
+        #[command(subcommand)]
+        action: ProjectCommand,
+    },
+    /// Import a directory of MADR files into a project.
+    ///
+    /// This is the bootstrap path for an existing corpus. Each document keeps the status
+    /// its own front matter declares, which is why it is an operator command and not an
+    /// MCP tool: an agent submitting through `adr_submit` cannot accept its own decision.
+    Import {
+        /// Project slug to import into. It must already exist.
+        #[arg(long)]
+        project: String,
+        /// Directory to walk recursively, collecting `*.md`.
+        ///
+        /// Give it relative to the repository root, because the path as walked becomes the
+        /// decision's `external_ref` and that is what later renames are recognised against.
+        #[arg(long)]
+        dir: String,
+        /// Who the import is attributed to.
+        #[arg(long, default_value = "human:adrian")]
+        actor: String,
+        /// Parse and report without writing anything.
+        #[arg(long)]
+        dry_run: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum ProjectCommand {
+    /// Create a project.
+    Add {
+        /// Slug every other command and the REST surface will use.
+        #[arg(long)]
+        slug: String,
+        /// Human readable name.
+        #[arg(long)]
+        name: String,
+        /// Repository this project's decisions come from.
+        #[arg(long)]
+        repo_url: Option<String>,
+    },
+    /// Delete a project and everything that belongs to it.
+    ///
+    /// Stop the daemon first. The embed worker shares the database and could race the
+    /// deletion, and its in-flight batch would write points back into a project that is
+    /// being removed.
+    Rm {
+        /// Slug of the project to delete.
+        #[arg(long)]
+        slug: String,
+        /// Actually delete. Without this the command reports what would go and stops.
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 #[tokio::main]
@@ -79,6 +138,23 @@ async fn main() -> std::process::ExitCode {
                 } => commands::export(config, &project, &format, out.as_deref()).await,
                 Command::Migrate => commands::migrate(config).await,
                 Command::Check => commands::check(config).await,
+                Command::Project {
+                    action:
+                        ProjectCommand::Add {
+                            slug,
+                            name,
+                            repo_url,
+                        },
+                } => commands::project_add(config, &slug, &name, repo_url).await,
+                Command::Project {
+                    action: ProjectCommand::Rm { slug, force },
+                } => commands::project_rm(config, &slug, force).await,
+                Command::Import {
+                    project,
+                    dir,
+                    actor,
+                    dry_run,
+                } => commands::import(config, &project, &dir, &actor, dry_run).await,
                 Command::McpStdio { .. } => unreachable!("handled above"),
             };
             match result {

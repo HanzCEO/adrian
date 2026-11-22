@@ -259,13 +259,43 @@ curl -s localhost:38922/mcp -H 'content-type: application/json' -d '{
 
 | Tool | Arguments | Use it when |
 | --- | --- | --- |
+| `project_list` | `limit?` | You need the project slugs, or another tool said `project` is required. |
 | `adr_search` | `query`, `project?`, `status?`, `limit?` | You know what you are looking for, in words. |
-| `adr_get` | `id`, or `project` + `number` | You have a decision and need its detail. |
+| `adr_get` | `id`, or `project` + `number` | You have a decision and need its detail, including its chunks and whether each one is embedded. |
 | `adr_list` | `project?`, `status?`, `limit?` | You want an overview, not a search. |
 | `adr_submit` | `project`, `external_ref`, `source`, `actor`, `scopes?`, `idempotency_key?` | You are recording a new decision. |
 | `adr_similar` | `id`, `limit?` | You want to know whether this has been decided before. |
 | `adr_transition` | `id`, `to`, `actor`, `reason?` | You are changing a decision's status. |
 | `adr_context_for` | `path`, `project?`, `limit?` | You are about to change code. |
+
+`adr_get` returns the decision's chunks with the same fields `GET /v1/adrs/{id}` uses, so a
+caller can see that a document was chunked and whether the embed worker has caught up yet.
+
+### What is deliberately absent
+
+Some tools a caller will look for do not exist. Each absence is a decision rather than an
+oversight.
+
+`adr_update` is not there because the premise behind it is wrong. Submitting the same
+`external_ref` with different bytes creates a new revision. A revision never resets the
+status. An accepted decision stays accepted across an edit. A document that fails to parse
+never lands at all, because parsing happens before the transaction opens. There is nothing
+to patch.
+
+`adr_delete` is not there because the append-only history is the product. The supported
+answer is `adr_transition` to `withdrawn`, which leaves the record and its vectors in place
+on purpose.
+
+`adr_bulk_submit` is not there because bulk import is an operator act. `adrian import` walks
+a directory, honours each document's front matter and is idempotent on a re-run, which a
+tool call per file cannot be.
+
+`project_create` is not there for the same reason. Bootstrapping a project is an operator
+act served by `adrian project add`. `project_list` is exposed because it only reads. It is
+how a caller learns the slugs that the other tools need.
+
+Removing a project is an operator act too. `adrian project rm --slug <slug> --force` is the
+only way to do it. Stop the embed worker first so it cannot race the deletion.
 
 ### The safety rule
 
