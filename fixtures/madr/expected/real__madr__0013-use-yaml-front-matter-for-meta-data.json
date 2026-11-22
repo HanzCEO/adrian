@@ -1,0 +1,216 @@
+{
+  "title": "Use YAML front matter for metadata",
+  "template": "madr",
+  "decided_on": null,
+  "status_raw": null,
+  "status": null,
+  "decision_makers": [],
+  "consulted": [],
+  "informed": [],
+  "extra": {
+    "nav_order": 13,
+    "parent": "Decisions"
+  },
+  "sections": [
+    {
+      "kind": "context",
+      "raw_heading": "Context and Problem Statement",
+      "ordinal": 0,
+      "parent": null,
+      "text": "\nMADR offers the fields \"Status\", \"Decision Maker(s)\", and \"Date\".\nThese are a kind of metadata fields.\nShould this data be included in the ADR directly, or should it be separated somehow?\n\n",
+      "option_key": null,
+      "byte_start": 78,
+      "byte_end": 301
+    },
+    {
+      "kind": "drivers",
+      "raw_heading": "Decision Drivers",
+      "ordinal": 1,
+      "parent": null,
+      "text": "\n* Easy to read\n* Easy to write\n\n",
+      "option_key": null,
+      "byte_start": 301,
+      "byte_end": 354
+    },
+    {
+      "kind": "options",
+      "raw_heading": "Considered Options",
+      "ordinal": 2,
+      "parent": null,
+      "text": "\n* Use YAML front matter\n* Use plain Markdown everywhere\n\n",
+      "option_key": null,
+      "byte_start": 354,
+      "byte_end": 434
+    },
+    {
+      "kind": "outcome",
+      "raw_heading": "Decision Outcome",
+      "ordinal": 3,
+      "parent": null,
+      "text": "\nChosen option: \"Use YAML front matter\", because comes out best (see below).\n\n",
+      "option_key": null,
+      "byte_start": 434,
+      "byte_end": 532
+    },
+    {
+      "kind": "pros_cons",
+      "raw_heading": "Pros and Cons of the Options",
+      "ordinal": 4,
+      "parent": null,
+      "text": "\n",
+      "option_key": null,
+      "byte_start": 532,
+      "byte_end": 565
+    },
+    {
+      "kind": "pros_cons",
+      "raw_heading": "Use YAML front matter",
+      "ordinal": 5,
+      "parent": 4,
+      "text": "\nExample:\n\n```markdown\n---\nstatus: accepted\ndecision-makers:\ndate:\n---\n\n### Context and problem statement\n\nWe want to record architectural decisions made in this project.\nWhich format and structure should these records follow?\n```\n\nRendered output:\n\n![adr-013 rendered output](0013-example.png)\n\n* Good, because it shortens the body (essence of the ADR)\n* Good, because tools can handle it more easily\n* Good, because indicates the lower importance of the data\n* Bad, because pretends to be more accurate than it can be (e.g., possible status values)\n* Bad, because rendering not standardized\n* Bad, because not all Markdown parsers can parse it\n\n",
+      "option_key": "opt:use yaml front matter",
+      "byte_start": 565,
+      "byte_end": 1238
+    },
+    {
+      "kind": "pros_cons",
+      "raw_heading": "Use plain Markdown everywhere",
+      "ordinal": 6,
+      "parent": 4,
+      "text": "\n* Good, because all parsers can handle it\n* Bad, because special markdown parsing tooling is needed\n* Bad, because metadata is handled the same way as the content\n\n",
+      "option_key": "opt:use plain markdown everywhere",
+      "byte_start": 1238,
+      "byte_end": 1437
+    },
+    {
+      "kind": "more_info",
+      "raw_heading": "More Information",
+      "ordinal": 7,
+      "parent": null,
+      "text": "\n[ADR-0008](0008-add-status-field.md) reasons on adding metadata (such as status).\n",
+      "option_key": null,
+      "byte_start": 1437,
+      "byte_end": 1540
+    }
+  ],
+  "items": [
+    {
+      "kind": "driver",
+      "section": 1,
+      "ordinal": 0,
+      "text": "Easy to read",
+      "option_key": null,
+      "byte_start": 322,
+      "byte_end": 337
+    },
+    {
+      "kind": "driver",
+      "section": 1,
+      "ordinal": 1,
+      "text": "Easy to write",
+      "option_key": null,
+      "byte_start": 337,
+      "byte_end": 353
+    },
+    {
+      "kind": "option",
+      "section": 2,
+      "ordinal": 0,
+      "text": "Use YAML front matter",
+      "option_key": null,
+      "byte_start": 377,
+      "byte_end": 401
+    },
+    {
+      "kind": "option",
+      "section": 2,
+      "ordinal": 1,
+      "text": "Use plain Markdown everywhere",
+      "option_key": null,
+      "byte_start": 401,
+      "byte_end": 433
+    },
+    {
+      "kind": "pro",
+      "section": 5,
+      "ordinal": 0,
+      "text": "Good, because it shortens the body (essence of the ADR)",
+      "option_key": "opt:use yaml front matter",
+      "byte_start": 887,
+      "byte_end": 945
+    },
+    {
+      "kind": "pro",
+      "section": 5,
+      "ordinal": 1,
+      "text": "Good, because tools can handle it more easily",
+      "option_key": "opt:use yaml front matter",
+      "byte_start": 945,
+      "byte_end": 993
+    },
+    {
+      "kind": "pro",
+      "section": 5,
+      "ordinal": 2,
+      "text": "Good, because indicates the lower importance of the data",
+      "option_key": "opt:use yaml front matter",
+      "byte_start": 993,
+      "byte_end": 1052
+    },
+    {
+      "kind": "con",
+      "section": 5,
+      "ordinal": 3,
+      "text": "Bad, because pretends to be more accurate than it can be (e.g., possible status values)",
+      "option_key": "opt:use yaml front matter",
+      "byte_start": 1052,
+      "byte_end": 1142
+    },
+    {
+      "kind": "con",
+      "section": 5,
+      "ordinal": 4,
+      "text": "Bad, because rendering not standardized",
+      "option_key": "opt:use yaml front matter",
+      "byte_start": 1142,
+      "byte_end": 1184
+    },
+    {
+      "kind": "con",
+      "section": 5,
+      "ordinal": 5,
+      "text": "Bad, because not all Markdown parsers can parse it",
+      "option_key": "opt:use yaml front matter",
+      "byte_start": 1184,
+      "byte_end": 1237
+    },
+    {
+      "kind": "pro",
+      "section": 6,
+      "ordinal": 0,
+      "text": "Good, because all parsers can handle it",
+      "option_key": "opt:use plain markdown everywhere",
+      "byte_start": 1273,
+      "byte_end": 1315
+    },
+    {
+      "kind": "con",
+      "section": 6,
+      "ordinal": 1,
+      "text": "Bad, because special markdown parsing tooling is needed",
+      "option_key": "opt:use plain markdown everywhere",
+      "byte_start": 1315,
+      "byte_end": 1373
+    },
+    {
+      "kind": "con",
+      "section": 6,
+      "ordinal": 2,
+      "text": "Bad, because metadata is handled the same way as the content",
+      "option_key": "opt:use plain markdown everywhere",
+      "byte_start": 1373,
+      "byte_end": 1436
+    }
+  ],
+  "warnings": []
+}

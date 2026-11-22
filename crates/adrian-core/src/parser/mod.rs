@@ -42,6 +42,16 @@ pub fn parse_str(text: &str) -> ParsedAdr {
         section_headings.push((body_offset, heading));
     }
 
+    // Some formats (ADG, and anything Jekyll-flavoured) keep the title in front matter
+    // rather than as an H1. Accept it, but only as a fallback: the H1 wins when both exist.
+    if title.is_empty() {
+        if let Some(from_front) = front.extra.get("title").and_then(|v| v.as_str()) {
+            let trimmed = from_front.trim();
+            if !trimmed.is_empty() {
+                title = trimmed.to_string();
+            }
+        }
+    }
     if title.is_empty() {
         warnings.push(ParseWarning::MissingTitle);
     }
@@ -89,6 +99,26 @@ pub fn parse_str(text: &str) -> ParsedAdr {
             byte_end: abs_end,
         });
         ancestors.push((heading.level, index));
+    }
+
+    // An option's body can contain deeper headings (`#### Examples` under an option in
+    // MADR's own ADR-0010). Those sections are not new options, but their bullets still
+    // belong to the enclosing option, so the key is inherited down the ancestor chain.
+    let mut inherited: Vec<Option<String>> = Vec::with_capacity(sections.len());
+    for (index, section) in sections.iter().enumerate() {
+        let key = match (&section.option_key, section.parent) {
+            (Some(key), _) => Some(key.clone()),
+            (None, Some(parent)) => inherited.get(parent).cloned().flatten(),
+            (None, None) => None,
+        };
+        inherited.push(key);
+    }
+    for (index, section) in sections.iter_mut().enumerate() {
+        if section.option_key.is_none() {
+            if let Some(key) = inherited.get(index).cloned().flatten() {
+                section.option_key = Some(key);
+            }
+        }
     }
 
     // Extract items from the sections that carry them.

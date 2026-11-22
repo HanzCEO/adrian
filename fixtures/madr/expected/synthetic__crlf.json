@@ -1,0 +1,186 @@
+{
+  "title": "Use feature flags instead of long-lived branches",
+  "template": "madr",
+  "decided_on": "2024-02-02",
+  "status_raw": "proposed",
+  "status": "proposed",
+  "decision_makers": [],
+  "consulted": [],
+  "informed": [],
+  "extra": {},
+  "sections": [
+    {
+      "kind": "context",
+      "raw_heading": "Context and Problem Statement",
+      "ordinal": 0,
+      "parent": null,
+      "text": "\r\nBranches live for weeks and the merges are painful.\r\n\r\n",
+      "option_key": null,
+      "byte_start": 102,
+      "byte_end": 193
+    },
+    {
+      "kind": "drivers",
+      "raw_heading": "Decision Drivers",
+      "ordinal": 1,
+      "parent": null,
+      "text": "\r\n* Deploy frequency\r\n* Merge conflict volume\r\n\r\n",
+      "option_key": null,
+      "byte_start": 193,
+      "byte_end": 263
+    },
+    {
+      "kind": "options",
+      "raw_heading": "Considered Options",
+      "ordinal": 2,
+      "parent": null,
+      "text": "\r\n* Feature flags\r\n* Short-lived branches\r\n\r\n",
+      "option_key": null,
+      "byte_start": 263,
+      "byte_end": 331
+    },
+    {
+      "kind": "outcome",
+      "raw_heading": "Decision Outcome",
+      "ordinal": 3,
+      "parent": null,
+      "text": "\r\nChosen option: \"Feature flags\", because they decouple deploy from release.\r\n\r\n",
+      "option_key": null,
+      "byte_start": 331,
+      "byte_end": 432
+    },
+    {
+      "kind": "consequences",
+      "raw_heading": "Consequences",
+      "ordinal": 4,
+      "parent": 3,
+      "text": "\r\n* Good, because release is decoupled from deploy\r\n* Bad, because dead flags accumulate\r\n\r\n",
+      "option_key": null,
+      "byte_start": 432,
+      "byte_end": 542
+    },
+    {
+      "kind": "pros_cons",
+      "raw_heading": "Pros and Cons of the Options",
+      "ordinal": 5,
+      "parent": null,
+      "text": "\r\n",
+      "option_key": null,
+      "byte_start": 542,
+      "byte_end": 577
+    },
+    {
+      "kind": "pros_cons",
+      "raw_heading": "Feature flags",
+      "ordinal": 6,
+      "parent": 5,
+      "text": "\r\n* Good, because release is independent of deploy\r\n* Bad, because flags need a cleanup process\r\n\r\n",
+      "option_key": "opt:feature flags",
+      "byte_start": 577,
+      "byte_end": 695
+    },
+    {
+      "kind": "pros_cons",
+      "raw_heading": "Short-lived branches",
+      "ordinal": 7,
+      "parent": 5,
+      "text": "\r\n* Good, because no runtime cost\r\n* Bad, because incomplete work still merges\r\n",
+      "option_key": "opt:short-lived branches",
+      "byte_start": 695,
+      "byte_end": 801
+    }
+  ],
+  "items": [
+    {
+      "kind": "driver",
+      "section": 1,
+      "ordinal": 0,
+      "text": "Deploy frequency",
+      "option_key": null,
+      "byte_start": 216,
+      "byte_end": 236
+    },
+    {
+      "kind": "driver",
+      "section": 1,
+      "ordinal": 1,
+      "text": "Merge conflict volume",
+      "option_key": null,
+      "byte_start": 236,
+      "byte_end": 261
+    },
+    {
+      "kind": "option",
+      "section": 2,
+      "ordinal": 0,
+      "text": "Feature flags",
+      "option_key": null,
+      "byte_start": 288,
+      "byte_end": 305
+    },
+    {
+      "kind": "option",
+      "section": 2,
+      "ordinal": 1,
+      "text": "Short-lived branches",
+      "option_key": null,
+      "byte_start": 305,
+      "byte_end": 329
+    },
+    {
+      "kind": "consequence_good",
+      "section": 4,
+      "ordinal": 0,
+      "text": "Good, because release is decoupled from deploy",
+      "option_key": null,
+      "byte_start": 452,
+      "byte_end": 502
+    },
+    {
+      "kind": "consequence_bad",
+      "section": 4,
+      "ordinal": 1,
+      "text": "Bad, because dead flags accumulate",
+      "option_key": null,
+      "byte_start": 502,
+      "byte_end": 540
+    },
+    {
+      "kind": "pro",
+      "section": 6,
+      "ordinal": 0,
+      "text": "Good, because release is independent of deploy",
+      "option_key": "opt:feature flags",
+      "byte_start": 598,
+      "byte_end": 648
+    },
+    {
+      "kind": "con",
+      "section": 6,
+      "ordinal": 1,
+      "text": "Bad, because flags need a cleanup process",
+      "option_key": "opt:feature flags",
+      "byte_start": 648,
+      "byte_end": 693
+    },
+    {
+      "kind": "pro",
+      "section": 7,
+      "ordinal": 0,
+      "text": "Good, because no runtime cost",
+      "option_key": "opt:short-lived branches",
+      "byte_start": 723,
+      "byte_end": 756
+    },
+    {
+      "kind": "con",
+      "section": 7,
+      "ordinal": 1,
+      "text": "Bad, because incomplete work still merges",
+      "option_key": "opt:short-lived branches",
+      "byte_start": 756,
+      "byte_end": 801
+    }
+  ],
+  "warnings": []
+}

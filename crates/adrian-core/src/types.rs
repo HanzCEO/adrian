@@ -62,7 +62,7 @@ impl Status {
             .unwrap_or("")
             .trim();
 
-        const PREFIXES: [(&str, Status); 12] = [
+        const PREFIXES: [(&str, Status); 15] = [
             ("superseded by", Status::Superseded),
             ("superseded", Status::Superseded),
             ("deprecated", Status::Deprecated),
@@ -75,6 +75,9 @@ impl Status {
             ("obsolete", Status::Deprecated),
             ("draft", Status::Proposed),
             ("pending", Status::Proposed),
+            ("open", Status::Proposed),
+            ("decided", Status::Accepted),
+            ("agreed", Status::Accepted),
         ];
         PREFIXES
             .into_iter()
@@ -738,6 +741,7 @@ mod tests {
             Status::parse_loose("superseded by ADR-0123"),
             Some(Status::Superseded)
         );
+        assert_eq!(Status::parse_loose("decided"), Some(Status::Accepted));
         assert_eq!(Status::parse_loose("we will see"), None);
     }
 

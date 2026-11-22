@@ -1,0 +1,500 @@
+{
+  "title": "Support Categories",
+  "template": "madr",
+  "decided_on": null,
+  "status_raw": null,
+  "status": null,
+  "decision_makers": [],
+  "consulted": [],
+  "informed": [],
+  "extra": {
+    "nav_order": 10,
+    "parent": "Decisions"
+  },
+  "sections": [
+    {
+      "kind": "context",
+      "raw_heading": "Context and Problem Statement",
+      "ordinal": 0,
+      "parent": null,
+      "text": "\nADRs are recorded. The number of ADRs grows and the context/topic/scope of ADRs might be different (e.g., frontend, backend)\n\n",
+      "option_key": null,
+      "byte_start": 62,
+      "byte_end": 222
+    },
+    {
+      "kind": "drivers",
+      "raw_heading": "Decision Drivers",
+      "ordinal": 1,
+      "parent": null,
+      "text": "\n* Easy to find groups ADRs in hundreds of ADRs\n* Easy to group\n* Easy to create\n* Good finding without external tooling\n* Keep newcomers in mind (should be doable in <10 minutes)\n* Keep template lean\n\n",
+      "option_key": null,
+      "byte_start": 222,
+      "byte_end": 444
+    },
+    {
+      "kind": "options",
+      "raw_heading": "Considered Options",
+      "ordinal": 2,
+      "parent": null,
+      "text": "\n* Use labels\n* Add `* Category: CATEGORY` directly under the heading (similar to <https://gist.github.com/FaKleiser/2f9c63b6e1d436abb7358b68bf396f57>)\n* Use YAML front matter\n* Encode category in filename\n* Use subfolders with local IDs\n* Use subfolders with global IDs\n* Don't do it.\n\n",
+      "option_key": null,
+      "byte_start": 444,
+      "byte_end": 753
+    },
+    {
+      "kind": "outcome",
+      "raw_heading": "Decision Outcome",
+      "ordinal": 3,
+      "parent": null,
+      "text": "\nChosen option: \"Use subfolders with local IDs\", because comes out best (see below).\n\n",
+      "option_key": null,
+      "byte_start": 753,
+      "byte_end": 859
+    },
+    {
+      "kind": "pros_cons",
+      "raw_heading": "Pros and Cons of the Options",
+      "ordinal": 4,
+      "parent": null,
+      "text": "\n",
+      "option_key": null,
+      "byte_start": 859,
+      "byte_end": 892
+    },
+    {
+      "kind": "pros_cons",
+      "raw_heading": "Use labels",
+      "ordinal": 5,
+      "parent": 4,
+      "text": "\nExample:\n\nUse Angular ![category-frontend](https://img.shields.io/badge/category-frontend-blue.svg?style=flat-square)\n\n`![category-frontend](https://img.shields.io/badge/category-frontend-blue.svg?style=flat-square)`\n\n* Good, because full markdown\n* Good, because linking to an overview page is possible (using markdown)\n* Bad, because not straight-forward to parse\n* Bad, because no simple filtering using `ls` or Windows Explorer is possible\n\n",
+      "option_key": "opt:use labels",
+      "byte_start": 892,
+      "byte_end": 1353
+    },
+    {
+      "kind": "pros_cons",
+      "raw_heading": "Add `* Category: CATEGORY` directly under the heading",
+      "ordinal": 6,
+      "parent": 4,
+      "text": "\n* Good, because full markdown\n* Good, because linking to an overview page is possible (using markdown)\n* Good, because straight-forward to parse\n* Bad, because no simple filtering using `ls` or Windows Explorer is possible\n\n",
+      "option_key": "opt:add category: category directly under the heading",
+      "byte_start": 1353,
+      "byte_end": 1636
+    },
+    {
+      "kind": "pros_cons",
+      "raw_heading": "Use YAML front matter",
+      "ordinal": 7,
+      "parent": 4,
+      "text": "\nExample:\n\n```yaml\n---\ncategory: frontend\n---\n```\n\n* Good, because nearly straight-forward to parse\n* Good, because Jekyll supports it\n* Bad, because YAML front matter is not part of the [CommonMarc Spec](http://spec.commonmark.org/)\n* Bad, because no simple filtering using `ls` or Windows Explorer is possible\n\n",
+      "option_key": "opt:use yaml front matter",
+      "byte_start": 1636,
+      "byte_end": 1975
+    },
+    {
+      "kind": "pros_cons",
+      "raw_heading": "Encode category in filename",
+      "ordinal": 8,
+      "parent": 4,
+      "text": "\nExample: `0050--frontend--title-with-dashes.md`\n\n* Good, because programmatic filtering is possible\n* Good, because `ls -la | grep --category--` works\n* Bad, because plain file list in Windows explorer cannot be filtered\n* Bad, because as bad as [TagSpaces](https://www.tagspaces.org/), which stores the tags in the filenames in brackets. E.g., `demo[demotag secondtag].md`.\n\n",
+      "option_key": "opt:encode category in filename",
+      "byte_start": 1975,
+      "byte_end": 2384
+    },
+    {
+      "kind": "pros_cons",
+      "raw_heading": "Use subfolders with local IDs",
+      "ordinal": 9,
+      "parent": 4,
+      "text": "\nOptionally \"to-be-categorized\" folder.\n\nOne level of subfolder, not nested\n\n",
+      "option_key": "opt:use subfolders with local ids",
+      "byte_start": 2384,
+      "byte_end": 2495
+    },
+    {
+      "kind": "other",
+      "raw_heading": "Examples",
+      "ordinal": 10,
+      "parent": 9,
+      "text": "\n* `docs/decisions/smar/0000-secure-entities.md`\n* `docs/decisions/smar/0001-flexible-properties-selection.md`\n\n",
+      "option_key": "opt:use subfolders with local ids",
+      "byte_start": 2495,
+      "byte_end": 2621
+    },
+    {
+      "kind": "pros_cons",
+      "raw_heading": "Pros/cons",
+      "ordinal": 11,
+      "parent": 9,
+      "text": "\n* Good, because grouping is done by folders (which are natural for grouping)\n* Good, because typos can easily be spotted\n* Bad, because there is no unique number identifying an ADR\n* Bad, because two indices have to be maintained (`adr-log` needs to be updated)\n* Bad, because [e-adr](https://github.com/adr/e-adr) needs to be adapted to `@ADR(\"category\", number)` (not that bad)\n* Bad, because when category is unknown it is hard to find the right folder\n* Bad, because using categories might be hampering newcomers\n\n",
+      "option_key": "opt:pros/cons",
+      "byte_start": 2621,
+      "byte_end": 3155
+    },
+    {
+      "kind": "pros_cons",
+      "raw_heading": "Use subfolders with global IDs",
+      "ordinal": 12,
+      "parent": 4,
+      "text": "\n",
+      "option_key": "opt:use subfolders with global ids",
+      "byte_start": 3155,
+      "byte_end": 3191
+    },
+    {
+      "kind": "other",
+      "raw_heading": "Examples",
+      "ordinal": 13,
+      "parent": 12,
+      "text": "\n* `docs/decisions/smar/0005-secure-entities.md`\n* `docs/decisions/smar/0047-flexible-properties-selection.md`\n",
+      "option_key": "opt:use subfolders with global ids",
+      "byte_start": 3191,
+      "byte_end": 3316
+    }
+  ],
+  "items": [
+    {
+      "kind": "driver",
+      "section": 1,
+      "ordinal": 0,
+      "text": "Easy to find groups ADRs in hundreds of ADRs",
+      "option_key": null,
+      "byte_start": 243,
+      "byte_end": 290
+    },
+    {
+      "kind": "driver",
+      "section": 1,
+      "ordinal": 1,
+      "text": "Easy to group",
+      "option_key": null,
+      "byte_start": 290,
+      "byte_end": 306
+    },
+    {
+      "kind": "driver",
+      "section": 1,
+      "ordinal": 2,
+      "text": "Easy to create",
+      "option_key": null,
+      "byte_start": 306,
+      "byte_end": 323
+    },
+    {
+      "kind": "driver",
+      "section": 1,
+      "ordinal": 3,
+      "text": "Good finding without external tooling",
+      "option_key": null,
+      "byte_start": 323,
+      "byte_end": 363
+    },
+    {
+      "kind": "driver",
+      "section": 1,
+      "ordinal": 4,
+      "text": "Keep newcomers in mind (should be doable in <10 minutes)",
+      "option_key": null,
+      "byte_start": 363,
+      "byte_end": 422
+    },
+    {
+      "kind": "driver",
+      "section": 1,
+      "ordinal": 5,
+      "text": "Keep template lean",
+      "option_key": null,
+      "byte_start": 422,
+      "byte_end": 443
+    },
+    {
+      "kind": "option",
+      "section": 2,
+      "ordinal": 0,
+      "text": "Use labels",
+      "option_key": null,
+      "byte_start": 467,
+      "byte_end": 480
+    },
+    {
+      "kind": "option",
+      "section": 2,
+      "ordinal": 1,
+      "text": "Add `* Category: CATEGORY` directly under the heading (similar to <https://gist.github.com/FaKleiser/2f9c63b6e1d436abb7358b68bf396f57>)",
+      "option_key": null,
+      "byte_start": 480,
+      "byte_end": 618
+    },
+    {
+      "kind": "option",
+      "section": 2,
+      "ordinal": 2,
+      "text": "Use YAML front matter",
+      "option_key": null,
+      "byte_start": 618,
+      "byte_end": 642
+    },
+    {
+      "kind": "option",
+      "section": 2,
+      "ordinal": 3,
+      "text": "Encode category in filename",
+      "option_key": null,
+      "byte_start": 642,
+      "byte_end": 672
+    },
+    {
+      "kind": "option",
+      "section": 2,
+      "ordinal": 4,
+      "text": "Use subfolders with local IDs",
+      "option_key": null,
+      "byte_start": 672,
+      "byte_end": 704
+    },
+    {
+      "kind": "option",
+      "section": 2,
+      "ordinal": 5,
+      "text": "Use subfolders with global IDs",
+      "option_key": null,
+      "byte_start": 704,
+      "byte_end": 737
+    },
+    {
+      "kind": "option",
+      "section": 2,
+      "ordinal": 6,
+      "text": "Don't do it.",
+      "option_key": null,
+      "byte_start": 737,
+      "byte_end": 752
+    },
+    {
+      "kind": "pro",
+      "section": 5,
+      "ordinal": 0,
+      "text": "Good, because full markdown",
+      "option_key": "opt:use labels",
+      "byte_start": 1126,
+      "byte_end": 1156
+    },
+    {
+      "kind": "pro",
+      "section": 5,
+      "ordinal": 1,
+      "text": "Good, because linking to an overview page is possible (using markdown)",
+      "option_key": "opt:use labels",
+      "byte_start": 1156,
+      "byte_end": 1229
+    },
+    {
+      "kind": "con",
+      "section": 5,
+      "ordinal": 2,
+      "text": "Bad, because not straight-forward to parse",
+      "option_key": "opt:use labels",
+      "byte_start": 1229,
+      "byte_end": 1274
+    },
+    {
+      "kind": "con",
+      "section": 5,
+      "ordinal": 3,
+      "text": "Bad, because no simple filtering using `ls` or Windows Explorer is possible",
+      "option_key": "opt:use labels",
+      "byte_start": 1274,
+      "byte_end": 1352
+    },
+    {
+      "kind": "pro",
+      "section": 6,
+      "ordinal": 0,
+      "text": "Good, because full markdown",
+      "option_key": "opt:add category: category directly under the heading",
+      "byte_start": 1412,
+      "byte_end": 1442
+    },
+    {
+      "kind": "pro",
+      "section": 6,
+      "ordinal": 1,
+      "text": "Good, because linking to an overview page is possible (using markdown)",
+      "option_key": "opt:add category: category directly under the heading",
+      "byte_start": 1442,
+      "byte_end": 1515
+    },
+    {
+      "kind": "pro",
+      "section": 6,
+      "ordinal": 2,
+      "text": "Good, because straight-forward to parse",
+      "option_key": "opt:add category: category directly under the heading",
+      "byte_start": 1515,
+      "byte_end": 1557
+    },
+    {
+      "kind": "con",
+      "section": 6,
+      "ordinal": 3,
+      "text": "Bad, because no simple filtering using `ls` or Windows Explorer is possible",
+      "option_key": "opt:add category: category directly under the heading",
+      "byte_start": 1557,
+      "byte_end": 1635
+    },
+    {
+      "kind": "pro",
+      "section": 7,
+      "ordinal": 0,
+      "text": "Good, because nearly straight-forward to parse",
+      "option_key": "opt:use yaml front matter",
+      "byte_start": 1713,
+      "byte_end": 1762
+    },
+    {
+      "kind": "pro",
+      "section": 7,
+      "ordinal": 1,
+      "text": "Good, because Jekyll supports it",
+      "option_key": "opt:use yaml front matter",
+      "byte_start": 1762,
+      "byte_end": 1797
+    },
+    {
+      "kind": "con",
+      "section": 7,
+      "ordinal": 2,
+      "text": "Bad, because YAML front matter is not part of the [CommonMarc Spec](http://spec.commonmark.org/)",
+      "option_key": "opt:use yaml front matter",
+      "byte_start": 1797,
+      "byte_end": 1896
+    },
+    {
+      "kind": "con",
+      "section": 7,
+      "ordinal": 3,
+      "text": "Bad, because no simple filtering using `ls` or Windows Explorer is possible",
+      "option_key": "opt:use yaml front matter",
+      "byte_start": 1896,
+      "byte_end": 1974
+    },
+    {
+      "kind": "pro",
+      "section": 8,
+      "ordinal": 0,
+      "text": "Good, because programmatic filtering is possible",
+      "option_key": "opt:encode category in filename",
+      "byte_start": 2057,
+      "byte_end": 2108
+    },
+    {
+      "kind": "pro",
+      "section": 8,
+      "ordinal": 1,
+      "text": "Good, because `ls -la | grep --category--` works",
+      "option_key": "opt:encode category in filename",
+      "byte_start": 2108,
+      "byte_end": 2159
+    },
+    {
+      "kind": "con",
+      "section": 8,
+      "ordinal": 2,
+      "text": "Bad, because plain file list in Windows explorer cannot be filtered",
+      "option_key": "opt:encode category in filename",
+      "byte_start": 2159,
+      "byte_end": 2229
+    },
+    {
+      "kind": "con",
+      "section": 8,
+      "ordinal": 3,
+      "text": "Bad, because as bad as [TagSpaces](https://www.tagspaces.org/), which stores the tags in the filenames in brackets. E.g., `demo[demotag secondtag].md`.",
+      "option_key": "opt:encode category in filename",
+      "byte_start": 2229,
+      "byte_end": 2383
+    },
+    {
+      "kind": "pro",
+      "section": 11,
+      "ordinal": 0,
+      "text": "Good, because grouping is done by folders (which are natural for grouping)",
+      "option_key": "opt:pros/cons",
+      "byte_start": 2637,
+      "byte_end": 2714
+    },
+    {
+      "kind": "pro",
+      "section": 11,
+      "ordinal": 1,
+      "text": "Good, because typos can easily be spotted",
+      "option_key": "opt:pros/cons",
+      "byte_start": 2714,
+      "byte_end": 2758
+    },
+    {
+      "kind": "con",
+      "section": 11,
+      "ordinal": 2,
+      "text": "Bad, because there is no unique number identifying an ADR",
+      "option_key": "opt:pros/cons",
+      "byte_start": 2758,
+      "byte_end": 2818
+    },
+    {
+      "kind": "con",
+      "section": 11,
+      "ordinal": 3,
+      "text": "Bad, because two indices have to be maintained (`adr-log` needs to be updated)",
+      "option_key": "opt:pros/cons",
+      "byte_start": 2818,
+      "byte_end": 2899
+    },
+    {
+      "kind": "con",
+      "section": 11,
+      "ordinal": 4,
+      "text": "Bad, because [e-adr](https://github.com/adr/e-adr) needs to be adapted to `@ADR(\"category\", number)` (not that bad)",
+      "option_key": "opt:pros/cons",
+      "byte_start": 2899,
+      "byte_end": 3017
+    },
+    {
+      "kind": "con",
+      "section": 11,
+      "ordinal": 5,
+      "text": "Bad, because when category is unknown it is hard to find the right folder",
+      "option_key": "opt:pros/cons",
+      "byte_start": 3017,
+      "byte_end": 3093
+    },
+    {
+      "kind": "con",
+      "section": 11,
+      "ordinal": 6,
+      "text": "Bad, because using categories might be hampering newcomers",
+      "option_key": "opt:pros/cons",
+      "byte_start": 3093,
+      "byte_end": 3154
+    }
+  ],
+  "warnings": [
+    {
+      "kind": "unmatched_option",
+      "option": "Add `* Category: CATEGORY` directly under the heading (similar to <https://gist.github.com/FaKleiser/2f9c63b6e1d436abb7358b68bf396f57>)"
+    },
+    {
+      "kind": "unmatched_option",
+      "option": "Don't do it."
+    },
+    {
+      "kind": "orphan_pros_cons",
+      "heading": "Add `* Category: CATEGORY` directly under the heading"
+    },
+    {
+      "kind": "orphan_pros_cons",
+      "heading": "Pros/cons"
+    }
+  ]
+}

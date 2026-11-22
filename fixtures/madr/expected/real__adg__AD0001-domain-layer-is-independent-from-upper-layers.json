@@ -1,0 +1,103 @@
+{
+  "title": "Domain layer is independent from upper layers",
+  "template": "madr",
+  "decided_on": null,
+  "status_raw": "decided",
+  "status": "accepted",
+  "decision_makers": [],
+  "consulted": [],
+  "informed": [],
+  "extra": {
+    "adr_id": "0001",
+    "comments": [
+      {
+        "author": "",
+        "comment": "1",
+        "date": "2026-05-15 18:40:35"
+      }
+    ],
+    "title": "Domain layer is independent from upper layers"
+  },
+  "sections": [
+    {
+      "kind": "context",
+      "raw_heading": "<a name=\"question\"></a> Question",
+      "ordinal": 0,
+      "parent": null,
+      "text": "\nHow should the core domain model relate to the layers above it?\n\n",
+      "option_key": null,
+      "byte_start": 173,
+      "byte_end": 275
+    },
+    {
+      "kind": "options",
+      "raw_heading": "<a name=\"options\"></a> Options",
+      "ordinal": 1,
+      "parent": null,
+      "text": "\n1. <a name=\"option-1\"></a> Keep domain independent: domain packages may not import application, adapter, or infrastructure packages\n2. <a name=\"option-2\"></a> Allow upward imports: domain packages may freely import any layer\n\n",
+      "option_key": null,
+      "byte_start": 275,
+      "byte_end": 536
+    },
+    {
+      "kind": "drivers",
+      "raw_heading": "<a name=\"criteria\"></a> Criteria",
+      "ordinal": 2,
+      "parent": null,
+      "text": "\nDomain logic must be reusable independently of any delivery mechanism or persistence technology. Coupling domain to upper layers makes it impossible to test or reuse in isolation.\n\n",
+      "option_key": null,
+      "byte_start": 536,
+      "byte_end": 754
+    },
+    {
+      "kind": "outcome",
+      "raw_heading": "<a name=\"outcome\"></a> Outcome",
+      "ordinal": 3,
+      "parent": null,
+      "text": "We decided for [Option 1](#option-1) because: The domain layer encodes business rules that must remain stable regardless of how the tool is delivered or how data is stored. Keeping domain independent ensures that use-case logic and infrastructure can change without affecting the core model.\n\n",
+      "option_key": null,
+      "byte_start": 754,
+      "byte_end": 1081
+    },
+    {
+      "kind": "more_info",
+      "raw_heading": "<a name=\"comments\"></a> Comments",
+      "ordinal": 4,
+      "parent": null,
+      "text": "<a name=\"comment-1\"></a>1. (2026-05-15 18:40:35) : marked decision as decided\n",
+      "option_key": null,
+      "byte_start": 1081,
+      "byte_end": 1195
+    }
+  ],
+  "items": [
+    {
+      "kind": "option",
+      "section": 1,
+      "ordinal": 0,
+      "text": "<a name=\"option-1\"></a> Keep domain independent: domain packages may not import application, adapter, or infrastructure packages",
+      "option_key": null,
+      "byte_start": 310,
+      "byte_end": 442
+    },
+    {
+      "kind": "option",
+      "section": 1,
+      "ordinal": 1,
+      "text": "<a name=\"option-2\"></a> Allow upward imports: domain packages may freely import any layer",
+      "option_key": null,
+      "byte_start": 442,
+      "byte_end": 535
+    }
+  ],
+  "warnings": [
+    {
+      "kind": "unmatched_option",
+      "option": "<a name=\"option-1\"></a> Keep domain independent: domain packages may not import application, adapter, or infrastructure packages"
+    },
+    {
+      "kind": "unmatched_option",
+      "option": "<a name=\"option-2\"></a> Allow upward imports: domain packages may freely import any layer"
+    }
+  ]
+}

@@ -1,0 +1,113 @@
+{
+  "title": "Use Names as Identifier",
+  "template": "madr",
+  "decided_on": null,
+  "status_raw": null,
+  "status": null,
+  "decision_makers": [],
+  "consulted": [],
+  "informed": [],
+  "extra": {
+    "nav_order": 6,
+    "parent": "Decisions"
+  },
+  "sections": [
+    {
+      "kind": "context",
+      "raw_heading": "Context and Problem Statement",
+      "ordinal": 0,
+      "parent": null,
+      "text": "\nAn option is listed at \"Considered Options\" and repeated at \"Pros and Cons of the Options\". Finally, the chosen option is stated at \"Decision Outcome\".\n\n",
+      "option_key": null,
+      "byte_start": 66,
+      "byte_end": 253
+    },
+    {
+      "kind": "drivers",
+      "raw_heading": "Decision Drivers",
+      "ordinal": 1,
+      "parent": null,
+      "text": "\n* Easy to read\n* Easy to write\n* Avoid copy and paste errors\n\n",
+      "option_key": null,
+      "byte_start": 253,
+      "byte_end": 336
+    },
+    {
+      "kind": "options",
+      "raw_heading": "Considered Options",
+      "ordinal": 2,
+      "parent": null,
+      "text": "\n* Repeat all option names if they occur\n* Assign an identifier to an option, e.g., `[A] Use gradle as build tool`\n\n",
+      "option_key": null,
+      "byte_start": 336,
+      "byte_end": 474
+    },
+    {
+      "kind": "outcome",
+      "raw_heading": "Decision Outcome",
+      "ordinal": 3,
+      "parent": null,
+      "text": "\nChosen option: \"Repeat all option names if they occur\", because 1) there is no markdown standard for identifiers, 2) the document is harder to read if there are multiple options which must be remembered.\n",
+      "option_key": null,
+      "byte_start": 474,
+      "byte_end": 699
+    }
+  ],
+  "items": [
+    {
+      "kind": "driver",
+      "section": 1,
+      "ordinal": 0,
+      "text": "Easy to read",
+      "option_key": null,
+      "byte_start": 274,
+      "byte_end": 289
+    },
+    {
+      "kind": "driver",
+      "section": 1,
+      "ordinal": 1,
+      "text": "Easy to write",
+      "option_key": null,
+      "byte_start": 289,
+      "byte_end": 305
+    },
+    {
+      "kind": "driver",
+      "section": 1,
+      "ordinal": 2,
+      "text": "Avoid copy and paste errors",
+      "option_key": null,
+      "byte_start": 305,
+      "byte_end": 335
+    },
+    {
+      "kind": "option",
+      "section": 2,
+      "ordinal": 0,
+      "text": "Repeat all option names if they occur",
+      "option_key": null,
+      "byte_start": 359,
+      "byte_end": 399
+    },
+    {
+      "kind": "option",
+      "section": 2,
+      "ordinal": 1,
+      "text": "Assign an identifier to an option, e.g., `[A] Use gradle as build tool`",
+      "option_key": null,
+      "byte_start": 399,
+      "byte_end": 473
+    }
+  ],
+  "warnings": [
+    {
+      "kind": "unmatched_option",
+      "option": "Repeat all option names if they occur"
+    },
+    {
+      "kind": "unmatched_option",
+      "option": "Assign an identifier to an option, e.g., `[A] Use gradle as build tool`"
+    }
+  ]
+}

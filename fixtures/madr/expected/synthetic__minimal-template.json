@@ -1,0 +1,114 @@
+{
+  "title": "Use Postgres for the primary datastore",
+  "template": "madr",
+  "decided_on": null,
+  "status_raw": null,
+  "status": null,
+  "decision_makers": [],
+  "consulted": [],
+  "informed": [],
+  "extra": {},
+  "sections": [
+    {
+      "kind": "context",
+      "raw_heading": "Context and Problem Statement",
+      "ordinal": 0,
+      "parent": null,
+      "text": "\nWe need durable relational storage for billing records, with transactional guarantees\nacross multiple tables.\n\n",
+      "option_key": null,
+      "byte_start": 42,
+      "byte_end": 187
+    },
+    {
+      "kind": "options",
+      "raw_heading": "Considered Options",
+      "ordinal": 1,
+      "parent": null,
+      "text": "\n* Postgres\n* SQLite\n* MySQL\n\n",
+      "option_key": null,
+      "byte_start": 187,
+      "byte_end": 239
+    },
+    {
+      "kind": "outcome",
+      "raw_heading": "Decision Outcome",
+      "ordinal": 2,
+      "parent": null,
+      "text": "\nChosen option: \"Postgres\", because it is the only candidate that gives us transactional\nDDL and a managed offering our operations team already runs.\n\n",
+      "option_key": null,
+      "byte_start": 239,
+      "byte_end": 410
+    },
+    {
+      "kind": "consequences",
+      "raw_heading": "Consequences",
+      "ordinal": 3,
+      "parent": 2,
+      "text": "\n* Good, because the operations team has run it for years\n* Bad, because it is one more service to keep patched\n",
+      "option_key": null,
+      "byte_start": 410,
+      "byte_end": 539
+    }
+  ],
+  "items": [
+    {
+      "kind": "option",
+      "section": 1,
+      "ordinal": 0,
+      "text": "Postgres",
+      "option_key": null,
+      "byte_start": 210,
+      "byte_end": 221
+    },
+    {
+      "kind": "option",
+      "section": 1,
+      "ordinal": 1,
+      "text": "SQLite",
+      "option_key": null,
+      "byte_start": 221,
+      "byte_end": 230
+    },
+    {
+      "kind": "option",
+      "section": 1,
+      "ordinal": 2,
+      "text": "MySQL",
+      "option_key": null,
+      "byte_start": 230,
+      "byte_end": 238
+    },
+    {
+      "kind": "consequence_good",
+      "section": 3,
+      "ordinal": 0,
+      "text": "Good, because the operations team has run it for years",
+      "option_key": null,
+      "byte_start": 428,
+      "byte_end": 485
+    },
+    {
+      "kind": "consequence_bad",
+      "section": 3,
+      "ordinal": 1,
+      "text": "Bad, because it is one more service to keep patched",
+      "option_key": null,
+      "byte_start": 485,
+      "byte_end": 539
+    }
+  ],
+  "warnings": [
+    {
+      "kind": "unmatched_option",
+      "option": "Postgres"
+    },
+    {
+      "kind": "unmatched_option",
+      "option": "SQLite"
+    },
+    {
+      "kind": "unmatched_option",
+      "option": "MySQL"
+    }
+  ]
+}

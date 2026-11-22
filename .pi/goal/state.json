@@ -45,7 +45,7 @@
         "No `unwrap()` or `expect()` in non-test code under crates/adrian-core/src/store.rs",
         "Pragmas WAL, foreign_keys and busy_timeout are actually applied (test asserts the query results)"
       ],
-      "status": "in-progress",
+      "status": "completed",
       "auditResult": null,
       "error": null,
       "criteriaStatus": [
@@ -74,7 +74,7 @@
         "Every section and item byte_start/byte_end slices the original source bytes to exactly the text it reports (asserted over the whole corpus)",
         "Golden projection JSON exists for at least 5 fixtures and is byte-stable across two runs"
       ],
-      "status": "approved",
+      "status": "in-progress",
       "auditResult": null,
       "error": null,
       "criteriaStatus": [
@@ -328,5 +328,5 @@
   "yoloMode": true,
   "yoloSessionId": "01a202d8-c507-7311-b696-fdf1ce8f38b9",
   "createdAt": 1795354227474,
-  "updatedAt": 1795355096009
+  "updatedAt": 1795355139913
 }

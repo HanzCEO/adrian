@@ -169,7 +169,10 @@ fn parse_atx(line: &str, line_start: usize, line_end: usize) -> Option<Heading> 
 /// `parent` is the kind of the enclosing H2, which is what disambiguates
 /// "Consequences" (a section under Decision Outcome) from any other use of the word.
 pub fn classify(text: &str, level: u8, parent: Option<SectionKind>) -> SectionKind {
-    let normalized = normalize_typography(text)
+    // Some tools emit explicit anchors in the heading, for example
+    // `<a name="question"></a> Question`. They are presentation, not wording.
+    let without_anchors = strip_html_anchors(text);
+    let normalized = normalize_typography(&without_anchors)
         .to_ascii_lowercase()
         .replace([':', '.', ',', ';', '!', '?', '(', ')'], " ");
     let collapsed = normalized.split_whitespace().collect::<Vec<_>>().join(" ");
@@ -183,10 +186,13 @@ pub fn classify(text: &str, level: u8, parent: Option<SectionKind>) -> SectionKi
         }
     }
 
-    // Sub-headings under "Pros and Cons of the Options" are option titles, not headings
-    // from a fixed vocabulary. MADR gives them no identifier, so the title itself is the
-    // key and the section keeps the ProsCons kind so the join can find it.
-    if level >= 3 && parent == Some(SectionKind::ProsCons) {
+    // An H3 directly under "Pros and Cons of the Options" is an option title, not a
+    // heading from a fixed vocabulary. MADR gives options no identifier, so the title
+    // itself is the key and the section keeps the ProsCons kind so the join can find it.
+    //
+    // Deeper headings are structure *inside* an option (MADR's own ADR-0010 has
+    // `#### Examples` under an option heading), so they must not read as new options.
+    if level == 3 && parent == Some(SectionKind::ProsCons) {
         return SectionKind::ProsCons;
     }
 
@@ -196,22 +202,42 @@ pub fn classify(text: &str, level: u8, parent: Option<SectionKind>) -> SectionKi
         | "problem statement"
         | "context and problem"
         | "motivation"
-        | "issue" => SectionKind::Context,
-        "decision drivers" | "drivers" | "forces" | "decision drivers and constraints" => {
-            SectionKind::Drivers
-        }
+        | "issue"
+        | "question" => SectionKind::Context,
+        "decision drivers"
+        | "drivers"
+        | "forces"
+        | "decision drivers and constraints"
+        | "criteria" => SectionKind::Drivers,
         "considered options" | "options" | "alternatives" | "considered alternatives" => {
             SectionKind::Options
         }
-        "decision outcome" | "outcome" | "decision" | "chosen option" => SectionKind::Outcome,
+        "decision outcome" | "outcome" | "decision" | "chosen option" | "resolution" => {
+            SectionKind::Outcome
+        }
         "consequences" => SectionKind::Consequences,
         "confirmation" | "validation" => SectionKind::Confirmation,
         "pros and cons of the options" | "pros and cons" | "pros/cons" => SectionKind::ProsCons,
-        "more information" | "links" | "references" | "related decisions" | "notes" => {
-            SectionKind::MoreInfo
-        }
+        "more information" | "links" | "references" | "related decisions" | "notes"
+        | "comments" => SectionKind::MoreInfo,
         _ => SectionKind::Other,
     }
+}
+
+/// Remove leading HTML tags from a heading's text, so that an explicit anchor does not
+/// stop the heading from being recognised.
+fn strip_html_anchors(text: &str) -> String {
+    let mut working = text.trim();
+    loop {
+        if !working.starts_with('<') {
+            break;
+        }
+        let Some(close) = working.find('>') else {
+            break;
+        };
+        working = working[close + 1..].trim();
+    }
+    working.to_string()
 }
 
 #[cfg(test)]
@@ -296,6 +322,26 @@ mod tests {
         );
         assert_eq!(classify("More Information", 2, None), SectionKind::MoreInfo);
         assert_eq!(classify("Random Heading", 2, None), SectionKind::Other);
+    }
+
+    #[test]
+    fn strips_html_anchors_before_classifying() {
+        assert_eq!(
+            classify("<a name=\"question\"></a> Question", 2, None),
+            SectionKind::Context
+        );
+        assert_eq!(
+            classify("<a name=\"options\"></a> Options", 2, None),
+            SectionKind::Options
+        );
+    }
+
+    #[test]
+    fn deeper_headings_under_pros_and_cons_are_not_new_options() {
+        assert_eq!(
+            classify("Examples", 4, Some(SectionKind::ProsCons)),
+            SectionKind::Other
+        );
     }
 
     #[test]
