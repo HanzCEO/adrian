@@ -153,9 +153,11 @@ fn marker_len(rest: &str) -> usize {
     if let Some(b'0'..=b'9') = bytes.first() {
         idx += bytes.iter().take_while(|b| b.is_ascii_digit()).count();
     }
-    if matches!(bytes.get(idx), Some(b'.') | Some(b')')) {
-        idx += 1;
-    } else if matches!(bytes.get(idx), Some(b'*') | Some(b'-') | Some(b'+')) {
+    // The marker is either `N.`/`N)` or one of `*`, `-`, `+`; both are a single byte here.
+    if matches!(
+        bytes.get(idx),
+        Some(b'.') | Some(b')') | Some(b'*') | Some(b'-') | Some(b'+')
+    ) {
         idx += 1;
     }
     // One optional space after the marker.

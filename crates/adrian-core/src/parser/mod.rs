@@ -105,7 +105,7 @@ pub fn parse_str(text: &str) -> ParsedAdr {
     // MADR's own ADR-0010). Those sections are not new options, but their bullets still
     // belong to the enclosing option, so the key is inherited down the ancestor chain.
     let mut inherited: Vec<Option<String>> = Vec::with_capacity(sections.len());
-    for (index, section) in sections.iter().enumerate() {
+    for section in sections.iter() {
         let key = match (&section.option_key, section.parent) {
             (Some(key), _) => Some(key.clone()),
             (None, Some(parent)) => inherited.get(parent).cloned().flatten(),

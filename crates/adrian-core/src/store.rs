@@ -171,7 +171,7 @@ impl Store {
 
     /// Apply pragmas and any pending migrations. Idempotent.
     pub async fn migrate(&self) -> Result<()> {
-        self.write(|conn| migrate_sync(conn)).await
+        self.write(migrate_sync).await
     }
 
     /// The current schema version recorded in the file.
@@ -310,7 +310,7 @@ fn to_sql_blob(bytes: &[u8]) -> SqlValue {
 impl Store {
     /// Ensure the single local workspace exists and return its id.
     pub async fn ensure_default_workspace(&self) -> Result<Uuid> {
-        self.write(|conn| ensure_default_workspace_sync(conn)).await
+        self.write(ensure_default_workspace_sync).await
     }
 
     pub async fn create_project(&self, project: Project) -> Result<Uuid> {
@@ -1471,7 +1471,7 @@ impl Store {
             }
             values.push(Box::new(limit));
             let refs: Vec<&dyn rusqlite::ToSql> = values.iter().map(|v| v.as_ref()).collect();
-            let rows = stmt.query_map(refs.as_slice(), |row| map_adr(row))?;
+            let rows = stmt.query_map(refs.as_slice(), map_adr)?;
             let mut out = Vec::new();
             for row in rows {
                 out.push(row?);
