@@ -103,7 +103,7 @@
         "Scope extraction rejects absolute paths, paths containing '..', and mid-path wildcards (asserted)",
         "Chunk text for `document` kind equals the source bytes exactly when under budget (asserted)"
       ],
-      "status": "in-progress",
+      "status": "completed",
       "auditResult": null,
       "error": null,
       "criteriaStatus": [
@@ -131,7 +131,7 @@
         "embedder/weights/SHA256SUMS lists the sha256 of all 8 required files at revision b18df82e77306006a1dd0162199f6dfeacb5492e",
         "scripts/fetch_weights.sh is idempotent and verifies every sha256, exiting non-zero on mismatch"
       ],
-      "status": "approved",
+      "status": "in-progress",
       "auditResult": null,
       "error": null,
       "criteriaStatus": [
@@ -328,5 +328,5 @@
   "yoloMode": true,
   "yoloSessionId": "01a202d8-c507-7311-b696-fdf1ce8f38b9",
   "createdAt": 1795354227474,
-  "updatedAt": 1795355393185
+  "updatedAt": 1795355510585
 }

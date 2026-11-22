@@ -25,3 +25,9 @@ rustc-ice-*.txt
 embedder/weights/*
 !embedder/weights/SHA256SUMS
 !embedder/weights/.gitkeep
+
+# Oracle scratch space: the model snapshot used to regenerate the golden embeddings.
+scripts/oracle/model/
+scripts/oracle/.venv/
+scripts/oracle/__pycache__/
+scripts/oracle/probe*.py
