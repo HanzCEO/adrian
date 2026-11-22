@@ -122,7 +122,7 @@ stdio, for agents that insist on spawning a process:
 }
 ```
 
-The tools are `adr_search`, `adr_get`, `adr_list`, `adr_submit`, `adr_similar`,
+The tools are `project_list`, `adr_search`, `adr_get`, `adr_list`, `adr_submit`, `adr_similar`,
 `adr_transition` and `adr_context_for`. See [docs/API.md](docs/API.md).
 
 ## Environment
