@@ -123,12 +123,12 @@
       "byte_end": 2621
     },
     {
-      "kind": "pros_cons",
+      "kind": "other",
       "raw_heading": "Pros/cons",
       "ordinal": 11,
       "parent": 9,
       "text": "\n* Good, because grouping is done by folders (which are natural for grouping)\n* Good, because typos can easily be spotted\n* Bad, because there is no unique number identifying an ADR\n* Bad, because two indices have to be maintained (`adr-log` needs to be updated)\n* Bad, because [e-adr](https://github.com/adr/e-adr) needs to be adapted to `@ADR(\"category\", number)` (not that bad)\n* Bad, because when category is unknown it is hard to find the right folder\n* Bad, because using categories might be hampering newcomers\n\n",
-      "option_key": "opt:pros/cons",
+      "option_key": "opt:use subfolders with local ids",
       "byte_start": 2621,
       "byte_end": 3155
     },
@@ -420,7 +420,7 @@
       "section": 11,
       "ordinal": 0,
       "text": "Good, because grouping is done by folders (which are natural for grouping)",
-      "option_key": "opt:pros/cons",
+      "option_key": "opt:use subfolders with local ids",
       "byte_start": 2637,
       "byte_end": 2714
     },
@@ -429,7 +429,7 @@
       "section": 11,
       "ordinal": 1,
       "text": "Good, because typos can easily be spotted",
-      "option_key": "opt:pros/cons",
+      "option_key": "opt:use subfolders with local ids",
       "byte_start": 2714,
       "byte_end": 2758
     },
@@ -438,7 +438,7 @@
       "section": 11,
       "ordinal": 2,
       "text": "Bad, because there is no unique number identifying an ADR",
-      "option_key": "opt:pros/cons",
+      "option_key": "opt:use subfolders with local ids",
       "byte_start": 2758,
       "byte_end": 2818
     },
@@ -447,7 +447,7 @@
       "section": 11,
       "ordinal": 3,
       "text": "Bad, because two indices have to be maintained (`adr-log` needs to be updated)",
-      "option_key": "opt:pros/cons",
+      "option_key": "opt:use subfolders with local ids",
       "byte_start": 2818,
       "byte_end": 2899
     },
@@ -456,7 +456,7 @@
       "section": 11,
       "ordinal": 4,
       "text": "Bad, because [e-adr](https://github.com/adr/e-adr) needs to be adapted to `@ADR(\"category\", number)` (not that bad)",
-      "option_key": "opt:pros/cons",
+      "option_key": "opt:use subfolders with local ids",
       "byte_start": 2899,
       "byte_end": 3017
     },
@@ -465,7 +465,7 @@
       "section": 11,
       "ordinal": 5,
       "text": "Bad, because when category is unknown it is hard to find the right folder",
-      "option_key": "opt:pros/cons",
+      "option_key": "opt:use subfolders with local ids",
       "byte_start": 3017,
       "byte_end": 3093
     },
@@ -474,7 +474,7 @@
       "section": 11,
       "ordinal": 6,
       "text": "Bad, because using categories might be hampering newcomers",
-      "option_key": "opt:pros/cons",
+      "option_key": "opt:use subfolders with local ids",
       "byte_start": 3093,
       "byte_end": 3154
     }
@@ -482,19 +482,7 @@
   "warnings": [
     {
       "kind": "unmatched_option",
-      "option": "Add `* Category: CATEGORY` directly under the heading (similar to <https://gist.github.com/FaKleiser/2f9c63b6e1d436abb7358b68bf396f57>)"
-    },
-    {
-      "kind": "unmatched_option",
       "option": "Don't do it."
-    },
-    {
-      "kind": "orphan_pros_cons",
-      "heading": "Add `* Category: CATEGORY` directly under the heading"
-    },
-    {
-      "kind": "orphan_pros_cons",
-      "heading": "Pros/cons"
     }
   ]
 }

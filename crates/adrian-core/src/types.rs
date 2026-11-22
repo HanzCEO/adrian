@@ -597,6 +597,10 @@ pub struct IngestOutcome {
     pub status: Status,
     pub chunks: usize,
     pub warnings: Vec<ParseWarning>,
+    /// Index points that were removed because a newer revision replaced them. The caller
+    /// deletes them from the vector index; SQLite has already forgotten them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub superseded_points: Vec<uuid::Uuid>,
 }
 
 /// A role in the embedder contract.
@@ -628,42 +632,121 @@ impl EmbedRole {
 /// therefore related only by title string equality, so Adrian synthesises a stable key.
 pub fn option_key(title: &str) -> String {
     let normalized = normalize_typography(title);
-    let mut working = normalized.trim().to_string();
+    // Authors annotate a considered option and then leave the annotation out of the
+    // Pros-and-Cons heading, or the other way round. Two annotations account for every
+    // case in the MADR corpus, and both are removable without guessing:
+    //
+    //   * a markdown link, where the link text is the title: `[CC0](https://...)` -> `CC0`
+    //   * a trailing parenthetical that carries a URL:
+    //     `Add X under the heading (similar to <https://gist...>)` -> `Add X under the heading`
+    let mut working = strip_markdown_links(&normalized).trim().to_string();
+    working = strip_trailing_url_parenthetical(&working)
+        .trim()
+        .to_string();
 
-    // Markdown emphasis markers around or inside the title.
-    working = working.replace(['*', '_', '`'], "");
+    // Emphasis markers and quote characters are presentation, not identity. Removing them
+    // outright, rather than only around the whole title, is what lets `‘Hamcrest’ – the
+    // older alternative.` meet `Hamcrest - the older alternative`: the quotes there wrap a
+    // single word inside a longer title. This is a join key, never a display string, so the
+    // worst case of an over-eager removal is joining two spellings of the same option,
+    // which is exactly the intent.
+    working = working.replace(['*', '_', '`', '"', '\''], "");
 
-    // Surrounding quotes, possibly nested, possibly repeated.
+    // Quotes and trailing punctuation have to be removed together, to a fixpoint. Authors
+    // write `“Title”.`, where the punctuation is not at the end until the quote is gone.
     loop {
-        let trimmed = working.trim();
-        let stripped = trimmed
-            .strip_prefix('"')
-            .and_then(|s| s.strip_suffix('"'))
-            .or_else(|| {
-                trimmed
-                    .strip_prefix('\'')
-                    .and_then(|s| s.strip_suffix('\''))
+        let before = working.clone();
+
+        // Trailing punctuation that authors sprinkle inconsistently.
+        working = working
+            .trim_end_matches(|c: char| {
+                matches!(
+                    c,
+                    '.' | ',' | ':' | ';' | '!' | '?' | '-' | '\u{2013}' | '\u{2014}'
+                )
             })
-            .or_else(|| trimmed.strip_prefix('`').and_then(|s| s.strip_suffix('`')));
-        match stripped {
-            Some(inner) => working = inner.trim().to_string(),
-            None => break,
+            .trim_end()
+            .to_string();
+
+        if working == before {
+            break;
         }
     }
-
-    // Trailing punctuation that authors sprinkle inconsistently.
-    let working = working.trim_end_matches(|c: char| {
-        matches!(
-            c,
-            '.' | ',' | ':' | ';' | '!' | '?' | '-' | '\u{2013}' | '\u{2014}'
-        )
-    });
 
     // Collapse internal whitespace, then lowercase.
     let collapsed = working.split_whitespace().collect::<Vec<_>>().join(" ");
     let lowered = collapsed.to_lowercase();
 
     format!("opt:{lowered}")
+}
+
+/// Replace `[text](url)` with `text`, leaving anything that is not a link alone.
+///
+/// Only the link *text* is kept, because that is what the author considers the title.
+fn strip_markdown_links(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut chars = input.char_indices().peekable();
+
+    while let Some((index, c)) = chars.next() {
+        if c != '[' {
+            out.push(c);
+            continue;
+        }
+        // Find the matching `]` with no nested bracket in between.
+        let Some(close_rel) = input[index + 1..].find(']') else {
+            out.push(c);
+            continue;
+        };
+        let close = index + 1 + close_rel;
+        let text = &input[index + 1..close];
+        // It is only a link if `(` follows immediately and a `)` closes it.
+        let after = &input[close + 1..];
+        if !after.starts_with('(') {
+            out.push(c);
+            continue;
+        }
+        let Some(paren_rel) = after.find(')') else {
+            out.push(c);
+            continue;
+        };
+        if text.contains('[') {
+            out.push(c);
+            continue;
+        }
+        out.push_str(text);
+        // Skip past `](...)`.
+        let resume = close + 1 + paren_rel + 1;
+        while let Some((next_index, _)) = chars.peek() {
+            if *next_index < resume {
+                chars.next();
+            } else {
+                break;
+            }
+        }
+    }
+
+    out
+}
+
+/// Drop a single trailing `(...)` when it contains a URL.
+///
+/// A parenthetical without a URL is part of the title and is kept, so this cannot silently
+/// shorten a title that never carried an annotation.
+fn strip_trailing_url_parenthetical(input: &str) -> String {
+    let trimmed = input.trim_end();
+    if !trimmed.ends_with(')') {
+        return input.to_string();
+    }
+    let Some(open) = trimmed.rfind('(') else {
+        return input.to_string();
+    };
+    let inner = &trimmed[open + 1..trimmed.len() - 1];
+    let has_url = inner.contains("http://") || inner.contains("https://");
+    if has_url {
+        trimmed[..open].trim_end().to_string()
+    } else {
+        input.to_string()
+    }
 }
 
 /// Replace typographic quotes and dashes with their ASCII equivalents.
@@ -720,6 +803,42 @@ mod tests {
         assert_eq!(
             option_key("Plain \u{2014} JUnit5"),
             option_key("Plain - JUnit5")
+        );
+    }
+
+    #[test]
+    fn option_key_strips_a_markdown_link_to_its_text() {
+        // MADR's own ADR-0001 lists the option as a link but heads the section with the
+        // bare name.
+        assert_eq!(
+            option_key("[CC0](https://creativecommons.org/share-your-work/public-domain/cc0/)"),
+            "opt:cc0"
+        );
+        assert_eq!(
+            option_key("[CC0](https://example.com/cc0)"),
+            option_key("CC0")
+        );
+        // A bracket that is not a link is left alone.
+        assert_eq!(option_key("option [A]"), "opt:option [a]");
+        assert_eq!(option_key("array[i] index"), "opt:array[i] index");
+    }
+
+    #[test]
+    fn option_key_drops_a_trailing_parenthetical_that_carries_a_url() {
+        // MADR's own ADR-0010 annotates the list entry but not the heading.
+        assert_eq!(
+            option_key("Add `* Category: CATEGORY` directly under the heading (similar to <https://gist.github.com/x>)"),
+            option_key("Add `* Category: CATEGORY` directly under the heading")
+        );
+        // A parenthetical with no URL is part of the title and stays.
+        assert_eq!(
+            option_key("Assign an identifier (e.g. [A])"),
+            "opt:assign an identifier (e.g. [a])"
+        );
+        // A parenthetical in the middle is untouched.
+        assert_eq!(
+            option_key("Use labels (see above) for grouping"),
+            "opt:use labels (see above) for grouping"
         );
     }
 

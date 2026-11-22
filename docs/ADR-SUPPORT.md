@@ -45,9 +45,30 @@ template, which has no Pros and Cons section at all, produces an `UnmatchedOptio
 option. That is correct: there is nothing to join to.
 
 **A heading that is a label rather than an option.** MADR's own ADR-0010 has
-`### Pros/cons` as a sub-label inside an option, and it becomes an option of its own. It
-warns. There is no reliable way to tell a label from an option title without reading the
-prose, and Adrian does not read prose.
+`#### Pros/cons` as a sub-label inside an option. Anything deeper than an H3 under
+*Pros and Cons of the Options* is treated as structure inside the enclosing option: it keeps
+the option's key and its `Good` / `Neutral` / `Bad` bullets stay attached to that option, so
+`#### Pros/cons` no longer swallows them or becomes an option of its own.
+
+The remaining ambiguity is a genuine one: a `###` heading that is really a label rather than
+an option title is still read as an option. There is no way to tell the two apart without
+reading the prose, and Adrian does not read prose. It warns rather than guessing.
+
+**Annotated option titles.** Authors annotate a considered option and then leave the
+annotation out of the Pros-and-Cons heading, or the other way round. Two forms appear in the
+MADR corpus and both are absorbed:
+
+| Written in *Considered Options* | Heading | Joined by |
+| --- | --- | --- |
+| `[CC0](https://creativecommons.org/…)` | `### CC0` | the link text is kept |
+| `Add X under the heading (similar to <https://gist…>)` | `### Add X under the heading` | a trailing parenthetical containing a URL is dropped |
+| `“AssertJ”` | `### AssertJ` | quote characters are removed |
+| `‘Hamcrest’ – the older alternative.` | `### Hamcrest - the older alternative` | quotes removed, en dash normalised, trailing punctuation stripped |
+
+This is normalisation, not fuzzy matching: both sides get the same treatment, so a title that
+differs only in quoting, a trailing parenthetical carrying a URL, or trailing punctuation
+still joins. The fixture `synthetic/smart-quotes.md` exercises all four forms and asserts
+that no join warning is produced, so the normalisation cannot regress silently.
 
 **Nygard and Y-statement records.** The parser maps headings onto a closed set of semantic
 kinds, so a Nygard document with `## Status`, `## Context`, `## Decision`, `## Consequences`

@@ -74,6 +74,21 @@ async fn handle_one(state: &AppState, request: Value) -> Option<Value> {
     // Notifications carry no id and expect no reply.
     let is_notification = id.is_none();
 
+    // A `params` member that is present but not an object is a malformed envelope, which is
+    // a protocol error (-32602), not a tool failure. Checking it once here means no handler
+    // has to defend against a string, number or array arriving where an object is expected.
+    if !params.is_null() && !params.is_object() {
+        return if is_notification {
+            None
+        } else {
+            Some(error_response(
+                id,
+                -32602,
+                "invalid params: `params` must be an object",
+            ))
+        };
+    }
+
     match method {
         "initialize" => Some(ok_response(
             id,
@@ -87,15 +102,38 @@ async fn handle_one(state: &AppState, request: Value) -> Option<Value> {
         "ping" => Some(ok_response(id, json!({}))),
         "tools/list" => Some(ok_response(id, json!({ "tools": tool_catalogue() }))),
         "tools/call" => {
-            let name = params
-                .get("name")
-                .and_then(|value| value.as_str())
-                .unwrap_or_default()
-                .to_string();
-            let arguments = params
-                .get("arguments")
-                .cloned()
-                .unwrap_or_else(|| json!({}));
+            // The tool name and its arguments are part of the request's structure, so a
+            // malformed one is -32602. Only failures *inside* a well-formed call become a
+            // tool-level `isError`, which is what lets a model see and recover from them.
+            let Some(name) = params.get("name").and_then(|value| value.as_str()) else {
+                return if is_notification {
+                    None
+                } else {
+                    Some(error_response(
+                        id,
+                        -32602,
+                        "invalid params: `tools/call` requires a string `name`",
+                    ))
+                };
+            };
+            let name = name.to_string();
+
+            let arguments = match params.get("arguments") {
+                None | Some(Value::Null) => json!({}),
+                Some(Value::Object(map)) => Value::Object(map.clone()),
+                Some(_) => {
+                    return if is_notification {
+                        None
+                    } else {
+                        Some(error_response(
+                            id,
+                            -32602,
+                            "invalid params: `arguments` must be an object",
+                        ))
+                    }
+                }
+            };
+
             Some(match call_tool(state, &name, arguments).await {
                 Ok(text) => ok_response(id, tool_result(&text, false)),
                 Err(message) => ok_response(id, tool_result(&message, true)),
@@ -523,6 +561,16 @@ async fn tool_submit(state: &AppState, arguments: Value) -> Result<String, Strin
     )
     .await
     .map_err(|err| err.to_string())?;
+
+    if !outcome.superseded_points.is_empty() {
+        if let Err(err) = state
+            .qdrant
+            .delete_points(&state.settings.collection, &outcome.superseded_points)
+            .await
+        {
+            tracing::warn!(error = %err, "could not remove superseded points from the index");
+        }
+    }
 
     let body = render(&json!({
         "adr_id": outcome.adr_id.to_string(),

@@ -127,7 +127,9 @@ pub fn parse_str(text: &str) -> ParsedAdr {
         let bullets = items::extract_bullets(&section.text, section.byte_start_of_body(text));
         let mut ordinal = 0usize;
         for bullet in bullets {
-            let Some(kind) = items::classify_bullet(section.kind, &bullet.text) else {
+            let inside_option = section.option_key.is_some();
+            let Some(kind) = items::classify_bullet(section.kind, &bullet.text, inside_option)
+            else {
                 continue;
             };
             parsed_items.push(ParsedItem {

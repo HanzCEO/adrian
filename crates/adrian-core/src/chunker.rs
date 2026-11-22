@@ -66,6 +66,7 @@ pub struct ChunkedAdr {
 /// duplicate points.
 pub fn chunk(
     adr: &ParsedAdr,
+    source: &str,
     adr_id: uuid::Uuid,
     rev: i64,
     counter: &dyn TokenCounter,
@@ -73,6 +74,7 @@ pub fn chunk(
 ) -> Result<ChunkedAdr, ChunkerError> {
     let mut builder = Builder {
         adr,
+        source,
         adr_id,
         rev,
         counter,
@@ -90,6 +92,8 @@ pub fn chunk(
 
 struct Builder<'a> {
     adr: &'a ParsedAdr,
+    /// The verbatim document, which is what the `document` chunk must reproduce.
+    source: &'a str,
     adr_id: uuid::Uuid,
     rev: i64,
     counter: &'a dyn TokenCounter,
@@ -99,9 +103,12 @@ struct Builder<'a> {
 
 impl<'a> Builder<'a> {
     fn run(&mut self) -> Result<(), ChunkerError> {
-        // Exactly one document chunk per ADR, always, even if every section is empty.
-        let whole = self.adr_section_text();
-        self.emit(ChunkKind::Document, &whole);
+        // Exactly one document chunk per ADR, always, even if every section is empty. It is
+        // the document as submitted, not a reassembly: "find decisions like this one" should
+        // match the record the author wrote, including its front matter and heading style.
+        // Only an over-budget document is split, and then the pieces still concatenate back
+        // to the source.
+        self.emit_verbatim(ChunkKind::Document, self.source);
 
         if let Some(section) = self.adr.section(SectionKind::Context) {
             self.emit(ChunkKind::Context, section.text.trim());
@@ -142,26 +149,6 @@ impl<'a> Builder<'a> {
         }
 
         Ok(())
-    }
-
-    /// The whole document as submitted, which is what "find decisions like this" needs.
-    fn adr_section_text(&self) -> String {
-        let mut out = String::new();
-        if !self.adr.title.is_empty() {
-            out.push_str("# ");
-            out.push_str(&self.adr.title);
-            out.push_str("\n\n");
-        }
-        for section in &self.adr.sections {
-            if section.kind == SectionKind::Other && section.text.trim().is_empty() {
-                continue;
-            }
-            out.push_str(&section.raw_heading);
-            out.push('\n');
-            out.push_str(section.text.trim());
-            out.push_str("\n\n");
-        }
-        out.trim_end().to_string()
     }
 
     /// Option titles in source order, deduplicated by key.
@@ -240,14 +227,32 @@ impl<'a> Builder<'a> {
     }
 
     /// Emit one logical chunk, splitting it if it exceeds the token budget.
+    ///
+    /// Prose is trimmed, because leading and trailing whitespace carries no meaning inside
+    /// a section. The `document` chunk is the exception: it must reproduce the submitted
+    /// bytes, so it goes through [`Builder::emit_verbatim`].
     fn emit(&mut self, kind: ChunkKind, text: &str) {
         let trimmed = text.trim();
         if trimmed.is_empty() {
             return;
         }
-        let ordinal_start = self.chunks.iter().filter(|c| c.kind == kind).count();
+        self.push_pieces(kind, self.split_to_budget(trimmed));
+    }
 
-        let pieces = self.split_to_budget(trimmed);
+    /// Emit a chunk that must be byte-identical to its input when it fits the budget.
+    fn emit_verbatim(&mut self, kind: ChunkKind, text: &str) {
+        if text.trim().is_empty() {
+            return;
+        }
+        if self.counter.count(text) <= self.max_tokens {
+            self.push_pieces(kind, vec![(text.to_string(), false)]);
+            return;
+        }
+        self.push_pieces(kind, self.split_to_budget(text));
+    }
+
+    fn push_pieces(&mut self, kind: ChunkKind, pieces: Vec<(String, bool)>) {
+        let ordinal_start = self.chunks.iter().filter(|c| c.kind == kind).count();
         for (offset, (piece, hard_split)) in pieces.iter().enumerate() {
             let token_count = self.counter.count(piece);
             let ordinal = ordinal_start + offset;
@@ -642,6 +647,7 @@ mod tests {
         let adr = parser::parse(source.as_bytes());
         chunk(
             &adr,
+            source,
             uuid::Uuid::now_v7(),
             1,
             &counter(),
@@ -760,12 +766,177 @@ A smaller alternative.
         assert!(!async_std.text.contains("largest ecosystem"));
     }
 
+    /// Option chunks are emitted in the order of the deduplicated `Considered Options`
+    /// entries, so the i-th option chunk belongs to the i-th option key. Mapping them by
+    /// position is what the emitter actually guarantees; matching on text is not, because
+    /// the chunk carries the heading while the list entry may carry an annotation.
+    fn option_chunks_by_key(adr: &ParsedAdr, chunks: &[Chunk]) -> Vec<(String, String)> {
+        let mut seen = std::collections::BTreeSet::new();
+        let keys: Vec<String> = adr
+            .items_of(ItemKind::Option)
+            .map(|item| option_key(&item.text))
+            .filter(|key| seen.insert(key.clone()))
+            .collect();
+        let texts: Vec<String> = chunks
+            .iter()
+            .filter(|chunk| chunk.kind == ChunkKind::Option)
+            .map(|chunk| chunk.text.clone())
+            .collect();
+        assert_eq!(
+            keys.len(),
+            texts.len(),
+            "one option chunk per deduplicated option"
+        );
+        keys.into_iter().zip(texts).collect()
+    }
+
+    #[test]
+    fn every_pros_cons_argument_lands_in_its_own_option_chunk() {
+        // The whole point of the option chunk. MADR keeps the title in "Considered Options"
+        // and the arguments in "Pros and Cons", joined only by title equality, so a chunk
+        // that loses its arguments is the failure mode this test exists to catch.
+        let corpus = corpus();
+        assert!(corpus.len() >= 33, "expected the full corpus");
+
+        let mut checked = 0usize;
+        for (name, bytes) in corpus {
+            let source = String::from_utf8_lossy(&bytes).into_owned();
+            let adr = parser::parse(&bytes);
+            let chunked = chunk(
+                &adr,
+                &source,
+                uuid::Uuid::now_v7(),
+                1,
+                &WhitespaceTokenCounter,
+                DEFAULT_MAX_TOKENS,
+            )
+            .expect("chunk");
+
+            let by_key = option_chunks_by_key(&adr, &chunked.chunks);
+            let considered: std::collections::BTreeSet<String> = adr
+                .items_of(ItemKind::Option)
+                .map(|item| option_key(&item.text))
+                .collect();
+
+            for item in &adr.items {
+                if !matches!(item.kind, ItemKind::Pro | ItemKind::Con | ItemKind::Neutral) {
+                    continue;
+                }
+                let key = item
+                    .option_key
+                    .as_deref()
+                    .unwrap_or_else(|| panic!("{name}: {:?} has no option key", item.text));
+
+                // An argument whose option was never considered has nothing to join to.
+                // That is the orphan case, the parser already warns about it, and there is
+                // no option chunk it could belong to.
+                if !considered.contains(key) {
+                    assert!(
+                        adr.warnings
+                            .iter()
+                            .any(|warning| matches!(warning, ParseWarning::OrphanProsCons { .. })),
+                        "{name}: {key} has arguments but no considered option and no warning"
+                    );
+                    continue;
+                }
+
+                let chunk_text = by_key
+                    .iter()
+                    .find(|(option_key_value, _)| option_key_value == key)
+                    .map(|(_, text)| text)
+                    .unwrap_or_else(|| {
+                        panic!("{name}: no option chunk owns key {key} for {:?}", item.text)
+                    });
+
+                let bullet = item.text.trim();
+                assert!(
+                    chunk_text.contains(bullet),
+                    "{name}: the option chunk for {key} does not contain {bullet:?}\nchunk:\n{chunk_text}"
+                );
+                checked += 1;
+            }
+        }
+
+        assert!(
+            checked >= 50,
+            "the corpus should contain a meaningful number of pros/cons arguments, saw {checked}"
+        );
+    }
+
+    #[test]
+    fn the_annotated_option_fixtures_keep_all_their_arguments() {
+        // Three shapes the audit found broken, pinned individually so a regression names
+        // them:
+        //
+        //   madr__0010  an option annotated with a URL in the list but not in its heading,
+        //               and an option whose arguments sit under a `#### Pros/cons` sub-label
+        //   madr__0001  an option written as a markdown link in the list, bare in the heading
+        for (name, option_title, expected_arguments) in [
+            (
+                "real/madr__0010-support-categories.md",
+                "Use subfolders with local IDs",
+                7usize,
+            ),
+            (
+                "real/madr__0010-support-categories.md",
+                "Add `* Category: CATEGORY` directly under the heading",
+                4,
+            ),
+            ("real/madr__0001-use-CC0-or-MIT-as-license.md", "CC0", 2),
+        ] {
+            let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/madr");
+            let bytes = std::fs::read(root.join(name)).expect("fixture");
+            let source = String::from_utf8_lossy(&bytes).into_owned();
+            let adr = parser::parse(&bytes);
+            let chunked = chunk(
+                &adr,
+                &source,
+                uuid::Uuid::now_v7(),
+                1,
+                &WhitespaceTokenCounter,
+                DEFAULT_MAX_TOKENS,
+            )
+            .expect("chunk");
+
+            let key = option_key(option_title);
+            let arguments: Vec<&str> = adr
+                .items
+                .iter()
+                .filter(|item| {
+                    matches!(item.kind, ItemKind::Pro | ItemKind::Con | ItemKind::Neutral)
+                })
+                .filter(|item| item.option_key.as_deref() == Some(key.as_str()))
+                .map(|item| item.text.trim())
+                .collect();
+
+            assert_eq!(
+                arguments.len(),
+                expected_arguments,
+                "{name}: {option_title} should own {expected_arguments} argument(s), got {arguments:?}"
+            );
+
+            let by_key = option_chunks_by_key(&adr, &chunked.chunks);
+            let chunk_text = by_key
+                .iter()
+                .find(|(option_key_value, _)| option_key_value == &key)
+                .map(|(_, text)| text)
+                .unwrap_or_else(|| panic!("{name}: no option chunk for {option_title}"));
+
+            for argument in arguments {
+                assert!(
+                    chunk_text.contains(argument),
+                    "{name}: the {option_title} chunk is missing {argument:?}\nchunk:\n{chunk_text}"
+                );
+            }
+        }
+    }
+
     #[test]
     fn chunk_ids_are_deterministic() {
         let adr = parser::parse(SAMPLE.as_bytes());
         let id = uuid::Uuid::now_v7();
-        let first = chunk(&adr, id, 1, &counter(), DEFAULT_MAX_TOKENS).unwrap();
-        let second = chunk(&adr, id, 1, &counter(), DEFAULT_MAX_TOKENS).unwrap();
+        let first = chunk(&adr, SAMPLE, id, 1, &counter(), DEFAULT_MAX_TOKENS).unwrap();
+        let second = chunk(&adr, SAMPLE, id, 1, &counter(), DEFAULT_MAX_TOKENS).unwrap();
         assert_eq!(first.chunks.len(), second.chunks.len());
         for (a, b) in first.chunks.iter().zip(second.chunks.iter()) {
             assert_eq!(a.id, b.id);
@@ -779,8 +950,8 @@ A smaller alternative.
     fn chunk_ids_change_with_the_revision() {
         let adr = parser::parse(SAMPLE.as_bytes());
         let id = uuid::Uuid::now_v7();
-        let one = chunk(&adr, id, 1, &counter(), DEFAULT_MAX_TOKENS).unwrap();
-        let two = chunk(&adr, id, 2, &counter(), DEFAULT_MAX_TOKENS).unwrap();
+        let one = chunk(&adr, SAMPLE, id, 1, &counter(), DEFAULT_MAX_TOKENS).unwrap();
+        let two = chunk(&adr, SAMPLE, id, 2, &counter(), DEFAULT_MAX_TOKENS).unwrap();
         assert_ne!(one.chunks[0].id, two.chunks[0].id);
     }
 
@@ -788,8 +959,10 @@ A smaller alternative.
     fn no_chunk_is_empty() {
         for (name, bytes) in corpus() {
             let adr = parser::parse(&bytes);
+            let text = String::from_utf8_lossy(&bytes).into_owned();
             let chunked = chunk(
                 &adr,
+                &text,
                 uuid::Uuid::now_v7(),
                 1,
                 &WhitespaceTokenCounter,
@@ -807,25 +980,72 @@ A smaller alternative.
     }
 
     #[test]
-    fn document_chunk_equals_the_source_when_under_budget() {
-        let source = "# A title\n\n## Context and Problem Statement\n\nShort body.\n";
-        let chunked = chunk_source(source);
-        let document = chunked
-            .chunks
-            .iter()
-            .find(|c| c.kind == ChunkKind::Document)
-            .expect("document chunk");
-        // The document chunk is a reassembly of title plus sections, so it must contain
-        // every word of the source and no invented text.
-        for word in source.split_whitespace() {
-            let word = word.trim_matches(['#', '.']);
-            if word.is_empty() {
-                continue;
-            }
+    fn document_chunk_equals_the_source_bytes_when_under_budget() {
+        // Byte equality, not word containment. The document chunk is what "find decisions
+        // like this one" matches against, so it has to be the record the author wrote,
+        // front matter and heading style included.
+        for source in [
+            "# A title\n\n## Context and Problem Statement\n\nShort body.\n",
+            "---\nstatus: accepted\ndate: 2024-01-01\n---\n\n# T\n\n## Context and Problem Statement\n\nx\n",
+            "# No trailing newline",
+            "# T\n\n## Context and Problem Statement\n\n    indented code\n",
+            "# T\n\n## Context and Problem Statement\n\n```\nfenced\n```\n",
+        ] {
+            let chunked = chunk_source(source);
+            let document = chunked
+                .chunks
+                .iter()
+                .find(|c| c.kind == ChunkKind::Document)
+                .expect("document chunk");
+            assert_eq!(
+                document.text, source,
+                "the document chunk must reproduce the submitted bytes exactly"
+            );
+            assert_eq!(
+                document.text_sha256,
+                sha256(source.as_bytes()),
+                "the hash must be of the verbatim bytes"
+            );
+        }
+    }
+
+    #[test]
+    fn document_chunk_equals_the_source_for_the_whole_corpus() {
+        let corpus = corpus();
+        assert!(corpus.len() >= 33, "expected the full corpus");
+        for (name, bytes) in corpus {
+            let source = String::from_utf8_lossy(&bytes).into_owned();
+            let adr = parser::parse(&bytes);
+            let chunked = chunk(
+                &adr,
+                &source,
+                uuid::Uuid::now_v7(),
+                1,
+                &WhitespaceTokenCounter,
+                DEFAULT_MAX_TOKENS,
+            )
+            .expect("chunk");
+
+            let documents: Vec<&Chunk> = chunked
+                .chunks
+                .iter()
+                .filter(|c| c.kind == ChunkKind::Document)
+                .collect();
             assert!(
-                document.text.contains(word),
-                "document chunk lost the word {word:?}: {}",
-                document.text
+                !documents.is_empty(),
+                "{name}: no document chunk was produced"
+            );
+
+            // One chunk when it fits, several when it does not, but the concatenation is
+            // always the source. Nothing is dropped and nothing is invented.
+            let joined: String = documents.iter().map(|c| c.text.as_str()).collect();
+            assert_eq!(
+                joined, source,
+                "{name}: the document chunks do not reconstruct the source"
+            );
+            assert!(
+                documents.iter().all(|c| !c.truncated),
+                "{name}: a document chunk was marked truncated without an indivisible unit"
             );
         }
     }
@@ -839,8 +1059,15 @@ A smaller alternative.
             source.push_str("\n\n");
         }
         let adr = parser::parse(source.as_bytes());
-        let chunked =
-            chunk(&adr, uuid::Uuid::now_v7(), 1, &WhitespaceTokenCounter, 40).expect("chunk");
+        let chunked = chunk(
+            &adr,
+            &source,
+            uuid::Uuid::now_v7(),
+            1,
+            &WhitespaceTokenCounter,
+            40,
+        )
+        .expect("chunk");
 
         let contexts: Vec<&Chunk> = chunked
             .chunks
@@ -877,7 +1104,7 @@ A smaller alternative.
             "x".repeat(200)
         );
         let adr = parser::parse(source.as_bytes());
-        let chunked = chunk(&adr, uuid::Uuid::now_v7(), 1, &counter(), 10).expect("chunk");
+        let chunked = chunk(&adr, &source, uuid::Uuid::now_v7(), 1, &counter(), 10).expect("chunk");
         let contexts: Vec<&Chunk> = chunked
             .chunks
             .iter()
@@ -897,7 +1124,7 @@ A smaller alternative.
             source.push_str("A short sentence here. ");
         }
         let adr = parser::parse(source.as_bytes());
-        let chunked = chunk(&adr, uuid::Uuid::now_v7(), 1, &counter(), 30).expect("chunk");
+        let chunked = chunk(&adr, &source, uuid::Uuid::now_v7(), 1, &counter(), 30).expect("chunk");
         let contexts: Vec<&Chunk> = chunked
             .chunks
             .iter()

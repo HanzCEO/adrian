@@ -482,7 +482,16 @@ impl Store {
     ///
     /// Either every row lands or none does. The caller has already decided that this
     /// revision is genuinely new; duplicate detection happens in [`crate::ingest`].
-    pub async fn insert_adr_with_revision(&self, revision: NewRevision) -> Result<()> {
+    /// Persist a new revision atomically and drop the vectors of the revisions it
+    /// supersedes.
+    ///
+    /// Returns the `(collection, point_id)` pairs that were removed from `chunk_vector`, so
+    /// the caller can delete the matching points from the vector index. The old revisions
+    /// stay in SQLite: the history is the point of the design, only the index is current.
+    pub async fn insert_adr_with_revision(
+        &self,
+        revision: NewRevision,
+    ) -> Result<Vec<(String, Uuid)>> {
         self.write(move |conn| insert_revision_sync(conn, &revision))
             .await
     }
@@ -500,19 +509,63 @@ impl Store {
     }
 }
 
-fn insert_revision_sync(conn: &Connection, revision: &NewRevision) -> Result<()> {
+fn insert_revision_sync(conn: &Connection, revision: &NewRevision) -> Result<Vec<(String, Uuid)>> {
     conn.execute_batch("BEGIN IMMEDIATE;")?;
-    let outcome = insert_revision_inner(conn, revision);
+    let outcome = insert_revision_inner(conn, revision)
+        .and_then(|()| supersede_older_revisions(conn, revision.adr_id, revision.rev));
     match outcome {
-        Ok(()) => {
+        Ok(purged) => {
             conn.execute_batch("COMMIT;")?;
-            Ok(())
+            Ok(purged)
         }
         Err(err) => {
             let _ = conn.execute_batch("ROLLBACK;");
             Err(err)
         }
     }
+}
+
+/// Drop the queued work and the index entries of every revision older than `keep_rev`.
+///
+/// A superseded revision's chunks must not be embedded: they no longer describe the current
+/// decision, and leaving them queued would re-embed the whole history on every edit. The
+/// rows themselves stay in `chunk`, because export and history still need the text.
+fn supersede_older_revisions(
+    conn: &Connection,
+    adr_id: Uuid,
+    keep_rev: i64,
+) -> Result<Vec<(String, Uuid)>> {
+    let mut stmt = conn.prepare(
+        "SELECT v.collection, v.point_id
+         FROM chunk_vector v
+         JOIN chunk c ON c.id = v.chunk_id
+         WHERE c.adr_id = ?1 AND c.rev < ?2",
+    )?;
+    let rows = stmt.query_map(params![adr_id, keep_rev], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, Uuid>(1)?))
+    })?;
+    let mut purged = Vec::new();
+    for row in rows {
+        purged.push(row?);
+    }
+    drop(stmt);
+
+    conn.execute(
+        "DELETE FROM chunk_vector
+         WHERE chunk_id IN (SELECT id FROM chunk WHERE adr_id = ?1 AND rev < ?2)",
+        params![adr_id, keep_rev],
+    )?;
+
+    // Cancel queued or failed work for the superseded chunks. A job that is `running`
+    // right now is left alone; the worker re-checks the revision before it indexes.
+    conn.execute(
+        "DELETE FROM embed_job
+         WHERE state IN ('pending', 'failed')
+           AND chunk_id IN (SELECT id FROM chunk WHERE adr_id = ?1 AND rev < ?2)",
+        params![adr_id, keep_rev],
+    )?;
+
+    Ok(purged)
 }
 
 fn insert_revision_inner(conn: &Connection, revision: &NewRevision) -> Result<()> {

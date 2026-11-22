@@ -34,10 +34,10 @@
       "raw_heading": "Considered Options",
       "ordinal": 2,
       "parent": null,
-      "text": "\n* Plain JUnit5 assertions\n* AssertJ\n* Hamcrest\n\n",
+      "text": "\n* “Plain JUnit5 assertions”.\n* “AssertJ”\n* ‘Hamcrest’ – the older alternative.\n\n",
       "option_key": null,
       "byte_start": 317,
-      "byte_end": 388
+      "byte_end": 434
     },
     {
       "kind": "outcome",
@@ -46,8 +46,8 @@
       "parent": null,
       "text": "\nChosen option: “AssertJ”, because it offers fluent assertions and partial string matching.\n\n",
       "option_key": null,
-      "byte_start": 388,
-      "byte_end": 505
+      "byte_start": 434,
+      "byte_end": 551
     },
     {
       "kind": "consequences",
@@ -56,8 +56,8 @@
       "parent": 3,
       "text": "\n* Good, because failure messages name the expectation and the actual value\n* Bad, because it is another dependency\n\n",
       "option_key": null,
-      "byte_start": 505,
-      "byte_end": 639
+      "byte_start": 551,
+      "byte_end": 685
     },
     {
       "kind": "pros_cons",
@@ -66,8 +66,8 @@
       "parent": null,
       "text": "\n",
       "option_key": null,
-      "byte_start": 639,
-      "byte_end": 672
+      "byte_start": 685,
+      "byte_end": 718
     },
     {
       "kind": "pros_cons",
@@ -76,8 +76,8 @@
       "parent": 5,
       "text": "\n* Good, because no extra dependency\n* Bad, because there is no partial string matching\n\n",
       "option_key": "opt:plain junit5 assertions",
-      "byte_start": 672,
-      "byte_end": 789
+      "byte_start": 718,
+      "byte_end": 835
     },
     {
       "kind": "pros_cons",
@@ -86,18 +86,18 @@
       "parent": 5,
       "text": "\n* Good, because it offers fluent assertions\n* Good, because it allows partial string testing\n* Neutral, because it is a large library but a well known one\n* Bad, because assertions are less obvious to readers new to it\n\n",
       "option_key": "opt:assertj",
-      "byte_start": 789,
-      "byte_end": 1022
+      "byte_start": 835,
+      "byte_end": 1068
     },
     {
       "kind": "pros_cons",
-      "raw_heading": "Hamcrest – the older alternative",
+      "raw_heading": "Hamcrest - the older alternative",
       "ordinal": 8,
       "parent": 5,
       "text": "\n* Good, because it composes matchers well\n* Bad, because the failure messages are worse than AssertJ's\n",
       "option_key": "opt:hamcrest - the older alternative",
-      "byte_start": 1022,
-      "byte_end": 1165
+      "byte_start": 1068,
+      "byte_end": 1209
     }
   ],
   "items": [
@@ -123,28 +123,28 @@
       "kind": "option",
       "section": 2,
       "ordinal": 0,
-      "text": "Plain JUnit5 assertions",
+      "text": "“Plain JUnit5 assertions”.",
       "option_key": null,
       "byte_start": 340,
-      "byte_end": 366
+      "byte_end": 373
     },
     {
       "kind": "option",
       "section": 2,
       "ordinal": 1,
-      "text": "AssertJ",
+      "text": "“AssertJ”",
       "option_key": null,
-      "byte_start": 366,
-      "byte_end": 376
+      "byte_start": 373,
+      "byte_end": 389
     },
     {
       "kind": "option",
       "section": 2,
       "ordinal": 2,
-      "text": "Hamcrest",
+      "text": "‘Hamcrest’ – the older alternative.",
       "option_key": null,
-      "byte_start": 376,
-      "byte_end": 387
+      "byte_start": 389,
+      "byte_end": 433
     },
     {
       "kind": "consequence_good",
@@ -152,8 +152,8 @@
       "ordinal": 0,
       "text": "Good, because failure messages name the expectation and the actual value",
       "option_key": null,
-      "byte_start": 523,
-      "byte_end": 598
+      "byte_start": 569,
+      "byte_end": 644
     },
     {
       "kind": "consequence_bad",
@@ -161,8 +161,8 @@
       "ordinal": 1,
       "text": "Bad, because it is another dependency",
       "option_key": null,
-      "byte_start": 598,
-      "byte_end": 638
+      "byte_start": 644,
+      "byte_end": 684
     },
     {
       "kind": "pro",
@@ -170,8 +170,8 @@
       "ordinal": 0,
       "text": "Good, because no extra dependency",
       "option_key": "opt:plain junit5 assertions",
-      "byte_start": 701,
-      "byte_end": 737
+      "byte_start": 747,
+      "byte_end": 783
     },
     {
       "kind": "con",
@@ -179,8 +179,8 @@
       "ordinal": 1,
       "text": "Bad, because there is no partial string matching",
       "option_key": "opt:plain junit5 assertions",
-      "byte_start": 737,
-      "byte_end": 788
+      "byte_start": 783,
+      "byte_end": 834
     },
     {
       "kind": "pro",
@@ -188,8 +188,8 @@
       "ordinal": 0,
       "text": "Good, because it offers fluent assertions",
       "option_key": "opt:assertj",
-      "byte_start": 802,
-      "byte_end": 846
+      "byte_start": 848,
+      "byte_end": 892
     },
     {
       "kind": "pro",
@@ -197,8 +197,8 @@
       "ordinal": 1,
       "text": "Good, because it allows partial string testing",
       "option_key": "opt:assertj",
-      "byte_start": 846,
-      "byte_end": 895
+      "byte_start": 892,
+      "byte_end": 941
     },
     {
       "kind": "neutral",
@@ -206,8 +206,8 @@
       "ordinal": 2,
       "text": "Neutral, because it is a large library but a well known one",
       "option_key": "opt:assertj",
-      "byte_start": 895,
-      "byte_end": 957
+      "byte_start": 941,
+      "byte_end": 1003
     },
     {
       "kind": "con",
@@ -215,8 +215,8 @@
       "ordinal": 3,
       "text": "Bad, because assertions are less obvious to readers new to it",
       "option_key": "opt:assertj",
-      "byte_start": 957,
-      "byte_end": 1021
+      "byte_start": 1003,
+      "byte_end": 1067
     },
     {
       "kind": "pro",
@@ -224,8 +224,8 @@
       "ordinal": 0,
       "text": "Good, because it composes matchers well",
       "option_key": "opt:hamcrest - the older alternative",
-      "byte_start": 1062,
-      "byte_end": 1104
+      "byte_start": 1106,
+      "byte_end": 1148
     },
     {
       "kind": "con",
@@ -233,18 +233,9 @@
       "ordinal": 1,
       "text": "Bad, because the failure messages are worse than AssertJ's",
       "option_key": "opt:hamcrest - the older alternative",
-      "byte_start": 1104,
-      "byte_end": 1165
+      "byte_start": 1148,
+      "byte_end": 1209
     }
   ],
-  "warnings": [
-    {
-      "kind": "unmatched_option",
-      "option": "Hamcrest"
-    },
-    {
-      "kind": "orphan_pros_cons",
-      "heading": "Hamcrest – the older alternative"
-    }
-  ]
+  "warnings": []
 }

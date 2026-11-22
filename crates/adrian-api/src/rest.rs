@@ -245,6 +245,15 @@ pub async fn create_adr(
     )
     .await?;
 
+    // A revision replaced older ones, so their points are no longer in SQLite. Remove them
+    // from the index too; a failure here is worth reporting rather than swallowing.
+    if !outcome.superseded_points.is_empty() {
+        state
+            .qdrant
+            .delete_points(&state.settings.collection, &outcome.superseded_points)
+            .await?;
+    }
+
     let response = IngestResponse {
         id: outcome.adr_id.to_string(),
         rev: outcome.rev,

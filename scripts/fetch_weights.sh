@@ -9,9 +9,9 @@
 # Idempotent: a file whose checksum already matches is not downloaded again.
 #
 # Usage:
-#   scripts/fetch_weights.sh              # fetch and verify
+#   scripts/fetch_weights.sh              # fetch and verify; fail on a mismatch
 #   scripts/fetch_weights.sh --write-sums # regenerate SHA256SUMS from what is on disk
-#   scripts/fetch_weights.sh --force      # re-download everything
+#   scripts/fetch_weights.sh --force      # re-download everything, even if present
 
 set -euo pipefail
 
@@ -103,10 +103,26 @@ base="https://huggingface.co/${MODEL_REPO}/resolve/${MODEL_REVISION}"
 for file in "${FILES[@]}"; do
   target="$DEST/$file"
   mkdir -p "$(dirname "$target")"
-  if [[ -f "$target" ]] && ! $force && [[ -f "$SUMS" ]] && verify "$file" 2>/dev/null; then
-    echo "  $file: present and verified"
+
+  if [[ -f "$target" ]] && ! $force; then
+    if [[ -f "$SUMS" ]] && [[ "${MODEL_NO_VERIFY:-0}" != "1" ]]; then
+      # A file that does not match the manifest is an error, not something to paper over.
+      # Re-downloading it silently would mean a corrupted checkout still reported success,
+      # which is exactly the case this check exists to catch.
+      if ! verify "$file"; then
+        echo "" >&2
+        echo "error: $file does not match $SUMS" >&2
+        echo "The file is corrupt or truncated. Re-download everything with:" >&2
+        echo "  scripts/fetch_weights.sh --force" >&2
+        exit 1
+      fi
+      echo "  $file: present and verified"
+      continue
+    fi
+    echo "  $file: present (unverified)"
     continue
   fi
+
   echo "  $file: downloading"
   curl -fL --retry 5 --retry-delay 3 --progress-bar -o "$target.tmp" "$base/$file"
   mv "$target.tmp" "$target"

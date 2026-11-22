@@ -62,6 +62,98 @@ async fn tools_list_advertises_all_seven_tools() {
 }
 
 #[tokio::test]
+async fn invalid_params_are_minus_32602() {
+    let harness = Harness::new(None).await;
+    harness.create_project("demo").await;
+
+    // A `params` member that is present but not an object is a malformed envelope.
+    for bad_params in [json!("a string"), json!(42), json!([1, 2, 3]), json!(true)] {
+        let (status, body) = harness
+            .mcp(json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": bad_params.clone()
+            }))
+            .await;
+        assert_eq!(status, 200, "transport stays 200 for a protocol error");
+        assert_eq!(
+            body["error"]["code"], -32602,
+            "params {bad_params} should be -32602, got {body}"
+        );
+        assert_eq!(body["id"], 1);
+        assert!(
+            body.get("result").is_none(),
+            "a protocol error must not carry a result"
+        );
+    }
+
+    // `tools/call` without a name cannot be dispatched.
+    let (status, body) = harness
+        .mcp(json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": { "arguments": { "query": "x" } }
+        }))
+        .await;
+    assert_eq!(status, 200);
+    assert_eq!(body["error"]["code"], -32602);
+    assert!(body.get("result").is_none());
+
+    // A name that is not a string is equally malformed.
+    let (_, body) = harness
+        .mcp(json!({
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "tools/call",
+            "params": { "name": 7 }
+        }))
+        .await;
+    assert_eq!(body["error"]["code"], -32602);
+
+    // Arguments that are not an object are malformed.
+    let (_, body) = harness
+        .mcp(json!({
+            "jsonrpc": "2.0",
+            "id": 4,
+            "method": "tools/call",
+            "params": { "name": "adr_list", "arguments": "not an object" }
+        }))
+        .await;
+    assert_eq!(body["error"]["code"], -32602);
+
+    // A well-formed call still succeeds, so the validation is not over-eager.
+    let (_, body) = harness
+        .mcp(json!({
+            "jsonrpc": "2.0",
+            "id": 5,
+            "method": "tools/call",
+            "params": { "name": "adr_list", "arguments": { "project": "demo" } }
+        }))
+        .await;
+    assert!(
+        body.get("result").is_some(),
+        "a valid call must not be rejected: {body}"
+    );
+    assert_eq!(body["result"]["isError"], false);
+}
+
+#[tokio::test]
+async fn a_notification_with_bad_params_gets_no_reply() {
+    let harness = Harness::new(None).await;
+    let (status, body) = harness
+        .mcp(json!({
+            "jsonrpc": "2.0",
+            "method": "tools/call",
+            "params": "not an object"
+        }))
+        .await;
+    assert_eq!(status, 204, "a notification is never answered");
+    assert!(body.is_null(), "no body for a notification, got {body}");
+}
+
+#[tokio::test]
 async fn an_unknown_method_is_minus_32601() {
     let harness = Harness::new(None).await;
     let (status, body) = harness
@@ -281,12 +373,26 @@ async fn adr_list_and_adr_get_work_through_the_tools() {
 #[tokio::test]
 async fn mcp_accepts_a_streamable_http_accept_header() {
     let harness = Harness::new(None).await;
-    // The handler ignores the Accept header and always answers with JSON, which the MCP
-    // streamable-HTTP spec allows.
-    let (status, _) = harness
-        .mcp(json!({ "jsonrpc": "2.0", "id": 1, "method": "ping" }))
+    // A streamable-HTTP client sends both content types. The server answers with plain JSON,
+    // which the spec allows, so the header must be tolerated rather than rejected.
+    let (status, bytes) = harness
+        .send_with_headers(
+            "POST",
+            "/mcp",
+            Some(json!({ "jsonrpc": "2.0", "id": 1, "method": "ping" })),
+            &[
+                ("accept", "application/json, text/event-stream"),
+                ("content-type", "application/json"),
+            ],
+        )
         .await;
-    assert_eq!(status, 200);
+    assert_eq!(
+        status, 200,
+        "the streamable Accept header must be tolerated"
+    );
+    let body: Value = serde_json::from_slice(&bytes).expect("JSON body");
+    assert_eq!(body["jsonrpc"], "2.0");
+    assert_eq!(body["id"], 1);
 }
 
 #[tokio::test]

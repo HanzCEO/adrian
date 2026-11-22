@@ -231,37 +231,89 @@ fn option_key_joins_smart_quotes_and_trailing_punctuation() {
     let source = std::fs::read(fixtures_root().join("synthetic/smart-quotes.md")).expect("fixture");
     let adr = parser::parse(&source);
 
-    let options: Vec<String> = adr
+    // The fixture is built so that every considered option differs from its Pros-and-Cons
+    // heading in exactly the ways the normalisation exists to absorb:
+    //
+    //   list: “Plain JUnit5 assertions”.        heading: Plain JUnit5 assertions
+    //   list: “AssertJ”                          heading: AssertJ
+    //   list: ‘Hamcrest’ – the older alternative.  heading: Hamcrest - the older alternative
+    //
+    // Smart double quotes, smart single quotes, an en dash against a hyphen, and a trailing
+    // period. Without the normalisation none of the three would join, so this test fails if
+    // the normalisation is ever removed.
+    let option_texts: Vec<&str> = adr
         .items_of(ItemKind::Option)
-        .map(|i| i.text.clone())
+        .map(|item| item.text.as_str())
         .collect();
-    let keys: Vec<String> = adr
+    assert_eq!(option_texts.len(), 3, "options: {option_texts:?}");
+    assert!(
+        option_texts.iter().any(|text| text.contains('\u{201C}')),
+        "the fixture must carry a smart quote in an option title: {option_texts:?}"
+    );
+    assert!(
+        option_texts.iter().any(|text| text.contains('\u{2013}')),
+        "the fixture must carry an en dash in an option title: {option_texts:?}"
+    );
+    assert!(
+        option_texts.iter().any(|text| text.ends_with('.')),
+        "the fixture must carry trailing punctuation in an option title: {option_texts:?}"
+    );
+
+    let heading_keys: Vec<String> = adr
         .sections
         .iter()
         .filter(|s| s.kind == SectionKind::ProsCons && s.option_key.is_some())
         .filter_map(|s| s.option_key.clone())
         .collect();
+    assert_eq!(
+        heading_keys,
+        vec![
+            "opt:plain junit5 assertions",
+            "opt:assertj",
+            "opt:hamcrest - the older alternative",
+        ],
+        "the Pros-and-Cons headings should normalise to plain keys"
+    );
 
+    // Every option joins, so the fixture produces no join warnings at all. This is the
+    // assertion that actually exercises the normalisation: with the smart quotes left in
+    // place, or with the trailing period kept, every one of these three would fail.
+    let join_warnings: Vec<&ParseWarning> = adr
+        .warnings
+        .iter()
+        .filter(|warning| {
+            matches!(
+                warning,
+                ParseWarning::UnmatchedOption { .. } | ParseWarning::OrphanProsCons { .. }
+            )
+        })
+        .collect();
     assert!(
-        options.iter().any(|o| o == "AssertJ"),
-        "options: {options:?}"
+        join_warnings.is_empty(),
+        "every option should join its Pros-and-Cons heading, got {join_warnings:?}"
     );
-    assert!(
-        keys.contains(&"opt:assertj".to_string()),
-        "expected the AssertJ pros/cons heading to produce opt:assertj, got {keys:?}"
-    );
-    // The option list says "AssertJ"; the heading says "AssertJ" too, but the third option
-    // is written with an en dash in the heading and without it in the list.
-    let hamcrest = adr
-        .items_of(ItemKind::Option)
-        .any(|i| i.text.starts_with("Hamcrest"));
-    assert!(hamcrest, "the en-dash option should still be listed");
-    assert!(
-        !adr.warnings
+
+    // And the arguments are attached to the option they belong to.
+    for (title, expected_pros) in [
+        ("\u{201C}Plain JUnit5 assertions\u{201D}.", 1usize),
+        ("\u{201C}AssertJ\u{201D}", 2),
+        (
+            "\u{2018}Hamcrest\u{2019} \u{2013} the older alternative.",
+            1,
+        ),
+    ] {
+        let key = adrian_core::types::option_key(title);
+        let pros = adr
+            .items
             .iter()
-            .any(|w| matches!(w, ParseWarning::UnmatchedOption { option } if option == "AssertJ")),
-        "AssertJ should join despite the smart quotes"
-    );
+            .filter(|item| item.kind == ItemKind::Pro)
+            .filter(|item| item.option_key.as_deref() == Some(key.as_str()))
+            .count();
+        assert_eq!(
+            pros, expected_pros,
+            "option {title:?} should own {expected_pros} pro item(s), key {key:?}"
+        );
+    }
 }
 
 #[test]

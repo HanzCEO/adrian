@@ -100,7 +100,7 @@ are, so chunks follow the template rather than a character count.
 
 | Chunk kind | Composed from | Why |
 | --- | --- | --- |
-| `document` | the full source, truncated to the token budget | "find decisions like this one" |
+| `document` | the full source, byte for byte, split only when it exceeds the budget | "find decisions like this one" |
 | `context` | the Context and Problem Statement section | the problem, which is what a question is usually about |
 | `driver` | one Decision Driver bullet | one force, retrievable on its own |
 | `option` | the option title, its prose under Pros and Cons, and **all** of its pro/con bullets | a three-word bullet alone is useless, and MADR keeps the title and the arguments in different sections |
@@ -109,12 +109,20 @@ are, so chunks follow the template rather than a character count.
 | `confirmation` | the Confirmation section | the fitness function |
 | `more_info` | the More Information section | |
 
-The `option` row is the one that matters. MADR deliberately has no option identifiers: its
-own ADR-0006 rejected them because "there is no markdown standard for identifiers". The
+The `document` row is the one that is easy to get wrong. It is the submitted bytes, not a
+reassembly of the parsed sections: front matter, heading markers and blank lines all survive.
+That matters because it is the chunk a "find decisions like this one" query matches, and
+because export promises to return an unmodified import verbatim. An over-budget document is
+split, and the pieces still concatenate back to the source exactly.
+
+The `option` row is the other one that matters. MADR deliberately has no option identifiers:
+its own ADR-0006 rejected them because "there is no markdown standard for identifiers". The
 option listed under *Considered Options* and the H3 heading under *Pros and Cons of the
 Options* are therefore related only by title string equality. Adrian synthesises a
 deterministic key (`opt:` plus a normalised title) and joins on it, so the chunk that gets
-embedded contains both halves.
+embedded contains both halves: the title, the prose under the heading, and every
+`Good` / `Neutral` / `Bad` bullet, including the ones that sit under a deeper sub-label such as
+`#### Pros/cons`.
 
 ## Identity
 

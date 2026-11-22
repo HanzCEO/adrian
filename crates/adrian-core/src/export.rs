@@ -283,8 +283,19 @@ pub async fn render_madr(store: &Store, adr: &Adr) -> Result<String, ExportError
                 out.push('\n');
             }
             _ => {
-                out.push_str(section.text.trim());
-                out.push_str("\n\n");
+                // A sub-label inside an option (MADR's `#### Pros/cons`) keeps its prose but
+                // not its argument bullets: those are rendered once, under the option
+                // heading above. Emitting them here as well would duplicate every argument
+                // on the next parse.
+                let body = if section.option_key.is_some() {
+                    strip_argument_bullets(&section.text)
+                } else {
+                    section.text.trim().to_string()
+                };
+                if !body.is_empty() {
+                    out.push_str(&body);
+                    out.push_str("\n\n");
+                }
             }
         }
     }
@@ -319,6 +330,30 @@ fn join_list(values: &[String]) -> String {
     } else {
         unique.join(", ")
     }
+}
+
+/// Section text with only its `Good` / `Neutral` / `Bad` bullets removed.
+///
+/// Bullets that are not arguments, such as the entries of an `#### Examples` list, are kept.
+fn strip_argument_bullets(text: &str) -> String {
+    text.lines()
+        .filter(|line| {
+            let trimmed = line.trim_start();
+            let is_bullet =
+                trimmed.starts_with("* ") || trimmed.starts_with("- ") || trimmed.starts_with("+ ");
+            if !is_bullet {
+                return true;
+            }
+            let body = trimmed
+                .trim_start_matches(['*', '-', '+'])
+                .trim_start()
+                .to_ascii_lowercase();
+            !(body.starts_with("good,") || body.starts_with("bad,") || body.starts_with("neutral,"))
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+        .trim()
+        .to_string()
 }
 
 /// Section text with its bullet lines removed, so rendering does not duplicate the items.

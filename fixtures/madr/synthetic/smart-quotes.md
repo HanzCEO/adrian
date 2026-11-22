@@ -16,9 +16,9 @@ Assertions are written three different ways across the codebase.
 
 ## Considered Options
 
-* Plain JUnit5 assertions
-* AssertJ
-* Hamcrest
+* “Plain JUnit5 assertions”.
+* “AssertJ”
+* ‘Hamcrest’ – the older alternative.
 
 ## Decision Outcome
 
@@ -43,7 +43,7 @@ Chosen option: “AssertJ”, because it offers fluent assertions and partial st
 * Neutral, because it is a large library but a well known one
 * Bad, because assertions are less obvious to readers new to it
 
-### Hamcrest – the older alternative
+### Hamcrest - the older alternative
 
 * Good, because it composes matchers well
 * Bad, because the failure messages are worse than AssertJ's

@@ -184,8 +184,34 @@ fn strip_trailing_html_comment(text: &str) -> String {
     working
 }
 
+/// Classify a `Good` / `Neutral` / `Bad` bullet as an argument for an option.
+///
+/// Returns `None` for prose, which is what most non-argument bullets are.
+pub fn classify_argument(text: &str) -> Option<ItemKind> {
+    let lowered = normalize_typography(text).to_ascii_lowercase();
+    let head = lowered.trim_start();
+    if head.starts_with("good") {
+        Some(ItemKind::Pro)
+    } else if head.starts_with("bad") {
+        Some(ItemKind::Con)
+    } else if head.starts_with("neutral") {
+        Some(ItemKind::Neutral)
+    } else {
+        None
+    }
+}
+
 /// Classify a bullet inside a section of the given kind.
-pub fn classify_bullet(section: crate::types::SectionKind, text: &str) -> Option<ItemKind> {
+///
+/// `inside_option` is true when the section belongs to an option even though its own heading
+/// is not part of the vocabulary. MADR's own ADR-0010 puts an option's arguments under
+/// `#### Pros/cons`, a sub-label inside the option; those bullets are still that option's
+/// arguments and dropping them would lose every one of them.
+pub fn classify_bullet(
+    section: crate::types::SectionKind,
+    text: &str,
+    inside_option: bool,
+) -> Option<ItemKind> {
     use crate::types::SectionKind;
     let lowered = normalize_typography(text).to_ascii_lowercase();
     let head = lowered.trim_start();
@@ -202,18 +228,9 @@ pub fn classify_bullet(section: crate::types::SectionKind, text: &str) -> Option
                 Some(ItemKind::ConsequenceOther)
             }
         }
-        SectionKind::ProsCons => {
-            if head.starts_with("good") {
-                Some(ItemKind::Pro)
-            } else if head.starts_with("bad") {
-                Some(ItemKind::Con)
-            } else if head.starts_with("neutral") {
-                Some(ItemKind::Neutral)
-            } else {
-                // Prose under an option heading, not a Good/Neutral/Bad bullet.
-                None
-            }
-        }
+        SectionKind::ProsCons => classify_argument(text),
+        // A sub-label inside an option carries the option's arguments.
+        _ if inside_option => classify_argument(text),
         _ => None,
     }
 }
@@ -268,17 +285,47 @@ mod tests {
     #[test]
     fn classifies_consequence_and_pros_cons_bullets() {
         assert_eq!(
-            classify_bullet(SectionKind::Consequences, "Good, because faster"),
+            classify_bullet(SectionKind::Consequences, "Good, because faster", false),
             Some(ItemKind::ConsequenceGood)
         );
         assert_eq!(
-            classify_bullet(SectionKind::Consequences, "Bad, because slower"),
+            classify_bullet(SectionKind::Consequences, "Bad, because slower", false),
             Some(ItemKind::ConsequenceBad)
         );
         assert_eq!(
-            classify_bullet(SectionKind::ProsCons, "Neutral, because it depends"),
+            classify_bullet(SectionKind::ProsCons, "Neutral, because it depends", false),
             Some(ItemKind::Neutral)
         );
-        assert_eq!(classify_bullet(SectionKind::ProsCons, "Just prose"), None);
+        assert_eq!(
+            classify_bullet(SectionKind::ProsCons, "Just prose", false),
+            None
+        );
+    }
+
+    #[test]
+    fn a_sub_label_inside_an_option_keeps_the_option_arguments() {
+        // `#### Pros/cons` under an option heading is not part of the vocabulary, but its
+        // bullets are still the option's arguments.
+        assert_eq!(
+            classify_bullet(
+                SectionKind::Other,
+                "Good, because grouping is by folder",
+                true
+            ),
+            Some(ItemKind::Pro)
+        );
+        assert_eq!(
+            classify_bullet(SectionKind::Other, "Bad, because no unique number", true),
+            Some(ItemKind::Con)
+        );
+        // Outside an option, the same bullet is not an argument.
+        assert_eq!(
+            classify_bullet(
+                SectionKind::Other,
+                "Good, because grouping is by folder",
+                false
+            ),
+            None
+        );
     }
 }

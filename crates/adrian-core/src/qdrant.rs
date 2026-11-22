@@ -237,6 +237,26 @@ impl QdrantClient {
         Ok(())
     }
 
+    /// Remove specific points by id.
+    ///
+    /// Used when a revision supersedes older ones: SQLite has already forgotten those
+    /// vectors, so leaving the points behind would let a search return text that no longer
+    /// describes the current decision.
+    pub async fn delete_points(&self, collection: &str, ids: &[Uuid]) -> Result<()> {
+        if ids.is_empty() {
+            return Ok(());
+        }
+        let url = format!("{}/collections/{collection}/points/delete", self.base_url);
+        let body = json!({ "points": ids.iter().map(|id| id.to_string()).collect::<Vec<_>>() });
+        let response = self.send(self.http.post(&url).json(&body)).await?;
+        if !response.status().is_success() {
+            let status = response.status().as_u16();
+            let body = response.text().await.unwrap_or_default();
+            return Err(QdrantError::Status { status, body });
+        }
+        Ok(())
+    }
+
     /// Patch the cached status on every point of one ADR.
     ///
     /// The status in the payload is a cache for filtering, not the truth. SQLite is the

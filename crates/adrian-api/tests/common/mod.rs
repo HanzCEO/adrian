@@ -264,6 +264,40 @@ impl Harness {
         (status, bytes)
     }
 
+    /// Send a request with extra headers, for tests that care about them.
+    pub async fn send_with_headers(
+        &self,
+        method: &str,
+        uri: &str,
+        body: Option<Value>,
+        headers: &[(&str, &str)],
+    ) -> (StatusCode, Vec<u8>) {
+        let mut builder = Request::builder().method(method).uri(uri);
+        for (name, value) in headers {
+            builder = builder.header(*name, *value);
+        }
+        let body = match body {
+            Some(value) => Body::from(value.to_string()),
+            None => Body::empty(),
+        };
+        let request = builder.body(body).expect("request");
+        let response = self
+            .router
+            .clone()
+            .oneshot(request)
+            .await
+            .expect("response");
+        let status = response.status();
+        let bytes = response
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes()
+            .to_vec();
+        (status, bytes)
+    }
+
     /// Send an MCP JSON-RPC request.
     pub async fn mcp(&self, body: Value) -> (StatusCode, Value) {
         self.send("POST", "/mcp", Some(body), None).await

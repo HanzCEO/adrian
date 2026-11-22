@@ -186,14 +186,17 @@ pub fn classify(text: &str, level: u8, parent: Option<SectionKind>) -> SectionKi
         }
     }
 
-    // An H3 directly under "Pros and Cons of the Options" is an option title, not a
-    // heading from a fixed vocabulary. MADR gives options no identifier, so the title
-    // itself is the key and the section keeps the ProsCons kind so the join can find it.
-    //
-    // Deeper headings are structure *inside* an option (MADR's own ADR-0010 has
-    // `#### Examples` under an option heading), so they must not read as new options.
-    if level == 3 && parent == Some(SectionKind::ProsCons) {
-        return SectionKind::ProsCons;
+    // Inside "Pros and Cons of the Options": an H3 is an option title, and anything deeper
+    // is a sub-label within that option (`#### Examples`, `#### Pros/cons` in MADR's own
+    // ADR-0010). Sub-labels must stay `Other` so they inherit the option's key instead of
+    // becoming a heading of their own; `pros/cons` in particular would otherwise match the
+    // container alias and capture the option's arguments.
+    if level >= 3 && parent == Some(SectionKind::ProsCons) {
+        return if level == 3 {
+            SectionKind::ProsCons
+        } else {
+            SectionKind::Other
+        };
     }
 
     match collapsed.as_str() {
@@ -340,6 +343,20 @@ mod tests {
     fn deeper_headings_under_pros_and_cons_are_not_new_options() {
         assert_eq!(
             classify("Examples", 4, Some(SectionKind::ProsCons)),
+            SectionKind::Other
+        );
+        // `#### Pros/cons` is a sub-label inside an option, not the container and not a new
+        // option. Reading it as a container is what swallowed a real option's arguments.
+        assert_eq!(
+            classify("Pros/cons", 4, Some(SectionKind::ProsCons)),
+            SectionKind::Other
+        );
+        assert_eq!(
+            classify(
+                "Pros and Cons of the Options",
+                4,
+                Some(SectionKind::ProsCons)
+            ),
             SectionKind::Other
         );
     }

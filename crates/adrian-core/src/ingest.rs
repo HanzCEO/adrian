@@ -85,6 +85,7 @@ pub async fn ingest(
                 status: adr.cur_status,
                 chunks: store.list_chunks(adr.id, adr.cur_rev).await?.len(),
                 warnings: Vec::new(),
+                superseded_points: Vec::new(),
             });
         }
     }
@@ -111,6 +112,7 @@ pub async fn ingest(
                 status: adr.cur_status,
                 chunks: store.list_chunks(adr.id, adr.cur_rev).await?.len(),
                 warnings: Vec::new(),
+                superseded_points: Vec::new(),
             });
         }
     }
@@ -127,8 +129,15 @@ pub async fn ingest(
         .or(parsed.status)
         .unwrap_or(Status::Proposed);
 
-    let chunked = chunker::chunk(&parsed, adr_id, rev, counter, chunker::DEFAULT_MAX_TOKENS)
-        .map_err(|err| IngestError::Invalid(err.to_string()))?;
+    let chunked = chunker::chunk(
+        &parsed,
+        &source_text,
+        adr_id,
+        rev,
+        counter,
+        chunker::DEFAULT_MAX_TOKENS,
+    )
+    .map_err(|err| IngestError::Invalid(err.to_string()))?;
 
     let slug = slugify(&parsed.title, rev);
     let number = request
@@ -243,18 +252,14 @@ pub async fn ingest(
     };
 
     let chunk_count = revision.chunks.len();
-    store.insert_adr_with_revision(revision).await?;
+    let superseded = store.insert_adr_with_revision(revision).await?;
 
-    // A revision replaces the previous one's vectors rather than adding to them.
-    if action == IngestAction::Revised {
-        let stale = store.list_chunks(adr_id, rev - 1).await?;
-        if !stale.is_empty() {
-            tracing::info!(
-                adr = %adr_id,
-                stale_chunks = stale.len(),
-                "revision supersedes the previous one; its points will be replaced"
-            );
-        }
+    if !superseded.is_empty() {
+        tracing::info!(
+            adr = %adr_id,
+            points = superseded.len(),
+            "revision supersedes older revisions; their index entries were dropped"
+        );
     }
 
     Ok(IngestOutcome {
@@ -264,6 +269,7 @@ pub async fn ingest(
         status,
         chunks: chunk_count,
         warnings: parsed.warnings.clone(),
+        superseded_points: superseded.into_iter().map(|(_, point)| point).collect(),
     })
 }
 
@@ -477,6 +483,91 @@ mod tests {
         assert!(
             old.tx_to.is_some(),
             "the superseded revision must be closed"
+        );
+
+        // The new revision's chunks get jobs; the old revision's chunks must not be
+        // re-enqueued, or every edit would re-embed the whole history.
+        let rev1_chunks = store.list_chunks(adr.id, 1).await.expect("rev 1 chunks");
+        let rev2_chunks = store.list_chunks(adr.id, 2).await.expect("rev 2 chunks");
+        assert!(!rev2_chunks.is_empty());
+
+        let pending = store.claim_embed_jobs(1000).await.expect("claim");
+        let claimed: std::collections::BTreeSet<uuid::Uuid> =
+            pending.iter().map(|job| job.chunk_id).collect();
+        for chunk in &rev2_chunks {
+            assert!(
+                claimed.contains(&chunk.id),
+                "revision 2 chunk {} has no embed job",
+                chunk.id
+            );
+        }
+        for chunk in &rev1_chunks {
+            assert!(
+                !claimed.contains(&chunk.id),
+                "revision 1 chunk {} must not be re-enqueued",
+                chunk.id
+            );
+        }
+        assert_eq!(
+            claimed.len(),
+            rev2_chunks.len(),
+            "exactly the new revision's chunks should be queued"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_unchanged_ingest_enqueues_nothing() {
+        let store = Store::open_in_memory().expect("store");
+        store.migrate().await.expect("migrate");
+        let workspace = store.ensure_default_workspace().await.expect("workspace");
+        let project = Project {
+            id: Uuid::now_v7(),
+            workspace_id: workspace,
+            slug: "demo".to_string(),
+            name: "Demo".to_string(),
+            repo_url: None,
+            default_template: "madr".to_string(),
+            embed_model: crate::EMBED_MODEL.to_string(),
+            embed_version: crate::EMBED_VERSION,
+            created_at: 0,
+        };
+        store
+            .create_project(project.clone())
+            .await
+            .expect("project");
+
+        let source = b"# Use tokio\n\n## Context and Problem Statement\n\nx\n".to_vec();
+        let make = || IngestRequest {
+            project_id: project.id,
+            external_ref: "a.md".to_string(),
+            source: source.clone(),
+            source_format: "markdown".to_string(),
+            actor: "test".to_string(),
+            declared_scopes: vec![],
+            status_override: None,
+            embed_model: crate::EMBED_MODEL.to_string(),
+            embed_version: crate::EMBED_VERSION,
+            number: None,
+        };
+        let counter = WhitespaceTokenCounter;
+
+        let created = ingest(&store, make(), &counter).await.expect("create");
+        // Drain the queue for revision 1.
+        let first = store.claim_embed_jobs(1000).await.expect("claim");
+        assert_eq!(first.len(), created.chunks);
+        for job in &first {
+            store.finish_embed_job(job.id).await.expect("finish");
+        }
+
+        let again = ingest(&store, make(), &counter).await.expect("again");
+        assert_eq!(again.action, IngestAction::Unchanged);
+        assert!(
+            store
+                .claim_embed_jobs(1000)
+                .await
+                .expect("claim")
+                .is_empty(),
+            "an unchanged ingest must not enqueue any work"
         );
     }
 

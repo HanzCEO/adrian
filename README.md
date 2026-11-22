@@ -30,6 +30,8 @@ database, reachable only from inside the compose network.
 ```bash
 cp .env.example .env
 make weights            # one-time: fetch and verify the 717 MB model
+# a corrupt or partial download fails loudly; re-fetch with:
+#   scripts/fetch_weights.sh --force
 docker compose -f docker/docker-compose.yml up -d --build
 ```
 
