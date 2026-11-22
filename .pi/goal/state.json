@@ -1,0 +1,332 @@
+{
+  "goal": "Let's fucking go!",
+  "refinedGoal": "Build Adrian v0.1.0: a self-hosted, opinionated ADR database daemon. A three-container Docker Compose stack (adrian / qdrant / embedder) on network `adrian`, with only Adrian exposing a port. Adrian is the system of record in SQLite, ingests MADR documents over REST, parses them into a typed section/item projection, chunks them along template semantics, embeds chunks with uibk-embedding-v1 served by a from-scratch Rust candle engine, and indexes them in Qdrant as ColBERT multivectors plus dense vectors for hybrid retrieval. Coding agents connect over streamable-HTTP MCP (plus a stdio proxy). CPU-only for v0.1.0 with a `cuda` cargo feature present but disabled. Out of scope for v0.1.0: clustering into decision points, bitemporal valid-time queries, scope decay tracking, multi-tenancy, auth beyond an optional static bearer token.",
+  "status": "active",
+  "tasks": [
+    {
+      "id": "task-1",
+      "description": "Scaffold two cargo workspaces, config loading, and the three-service docker compose skeleton",
+      "contract": "Create the repository skeleton at the repo root (/home/hanz/Documents/OpenSource/adrian).\n\nLAYOUT (two separate cargo workspaces on purpose, so `cargo test` on adrian does not compile candle):\n  Cargo.toml                      -> root workspace: members = crates/adrian-core, crates/adrian-api, crates/adrian-bin\n  crates/adrian-core/             -> lib: domain types, MADR parser, chunker, sqlite store, qdrant client, embedder client\n  crates/adrian-api/              -> lib: axum router, REST handlers, MCP server\n  crates/adrian-bin/              -> bin `adrian`: subcommands serve | mcp-stdio | export | migrate | check\n  embedder/Cargo.toml             -> SEPARATE workspace, single crate `adrian-embedder`, bin `adrian-embedder`\n  migrations/0001_init.sql\n  fixtures/madr/                  -> real MADR corpus (added in task-3)\n  fixtures/golden/                -> golden embeddings (added in task-5)\n  docker/Dockerfile.adrian\n  docker/Dockerfile.embedder\n  docker/docker-compose.yml\n  scripts/fetch_weights.sh\n  Makefile\n  .env.example\n  docs/ARCHITECTURE.md\n\nCRATE METADATA: edition 2021, license = \"Apache-2.0\" in every Cargo.toml, rust-version 1.85. Workspace dependencies declared once at the root and inherited with `workspace = true`.\n\nCORE DEPENDENCIES (adrian workspace): tokio (rt-multi-thread, macros, signal, net), axum 0.8, tower, tower-http (trace, cors), serde, serde_json, serde_yaml, rusqlite (bundled, with `serde_json` feature NOT needed) + r2d2 + r2d2_sqlite, uuid (v4, v5, v7, serde), sha2, thiserror, anyhow, tracing, tracing-subscriber (env-filter), clap (derive), reqwest (json, rustls-tls), regex, once_cell, chrono, globset, pulldown-cmark, base64, rmcp (for MCP) if it builds cleanly, otherwise hand-rolled JSON-RPC over axum. Prefer hand-rolled MCP JSON-RPC if `rmcp` adds friction; the protocol surface needed is small (initialize, tools/list, tools/call).\n\nEMBEDDER DEPENDENCIES (separate workspace): candle-core, candle-nn, candle-transformers (all same version), tokenizers, safetensors, serde, serde_json, axum, tokio, tracing, thiserror, anyhow, clap.\n\nCONFIG: `adrian-bin` reads config from environment with these names and defaults:\n  ADRIAN_BIND=0.0.0.0:8080\n  ADRIAN_DB_PATH=/data/adrian.db\n  ADRIAN_QDRANT_URL=http://qdrant:6333\n  ADRIAN_EMBEDDER_URL=http://embedder:8081\n  ADRIAN_COLLECTION=adr_chunks__uibk_v1\n  ADRIAN_API_TOKEN=            (empty = no auth)\n  ADRIAN_LOG=info\nImplement as a `Config` struct with `from_env()`. No config file in v0.1.0.\n\nDOCKER COMPOSE (docker/docker-compose.yml), network named exactly `adrian`, driver bridge:\n  service `qdrant`: image qdrant/qdrant:v1.15.5 (pin a concrete tag), volumes qdrant_storage:/qdrant/storage, NO published ports, healthcheck hitting /readyz.\n  service `embedder`: build from docker/Dockerfile.embedder with context = repo root, no published ports, healthcheck on /healthz, depends_on qdrant (not required, but keep explicit ordering only for adrian).\n  service `adrian`: build from docker/Dockerfile.adrian with context = repo root, ports \"8080:8080\", volume adrian_data:/data, depends_on embedder and qdrant with condition service_healthy.\n  Only `adrian` publishes a port. Add `restart: unless-stopped`.\n\nDOCKERFILES: both multi-stage (rust:1.93-slim builder with cached dependency layer via a dummy main.rs trick, debian:bookworm-slim runtime with ca-certificates). Dockerfile.embedder must be structured so task-7 can add a weights-baking stage without rewriting it.\n\n.env.example documents every env var above.\nMakefile targets: build, test, fmt, clippy, up, down, logs, weights, golden.\n\nWORKER MAY RUN `cargo check` / `cargo build` on both workspaces to confirm they compile, and `docker compose config` to confirm the compose file parses. The worker must NOT run `docker compose up` or any long e2e.",
+      "acceptanceCriteria": [
+        "`cargo metadata --format-version 1` succeeds at repo root and in embedder/, listing the expected packages",
+        "`cargo check --workspace` succeeds at repo root with zero errors",
+        "`cargo check` succeeds in embedder/ with zero errors",
+        "`docker compose -f docker/docker-compose.yml config` exits 0",
+        "`docker compose -f docker/docker-compose.yml config` output shows exactly one service with a `ports` mapping (adrian, 8080) and all three services attached to network `adrian`",
+        "`adrian --help` lists subcommands serve, mcp-stdio, export, migrate, check",
+        "`.env.example` documents every environment variable read by Config::from_env",
+        "No file outside docker/ references a hardcoded container hostname; hosts come from env vars"
+      ],
+      "status": "completed",
+      "auditResult": null,
+      "error": null,
+      "criteriaStatus": [
+        "pending",
+        "pending",
+        "pending",
+        "pending",
+        "pending",
+        "pending",
+        "pending",
+        "pending"
+      ]
+    },
+    {
+      "id": "task-2",
+      "description": "SQLite schema, migrations, and the store layer in adrian-core",
+      "contract": "Implement the SQLite persistence layer in crates/adrian-core. Source of truth for all records; Qdrant is a derived index only.\n\nmigrations/0001_init.sql must create exactly these tables. Use TEXT for UUIDs is NOT allowed: store ids as BLOB (16-byte uuid). Timestamps as INTEGER unix seconds. Dates (decided_on) as TEXT 'YYYY-MM-DD'.\n\n  workspace(id BLOB PK, slug TEXT UNIQUE NOT NULL, created_at INTEGER NOT NULL)\n  project(id BLOB PK, workspace_id BLOB NOT NULL REFERENCES workspace(id), slug TEXT NOT NULL, name TEXT NOT NULL,\n          repo_url TEXT, default_template TEXT NOT NULL DEFAULT 'madr',\n          embed_model TEXT NOT NULL DEFAULT 'uibk-embedding-v1', embed_version INTEGER NOT NULL DEFAULT 1,\n          created_at INTEGER NOT NULL, UNIQUE(workspace_id, slug))\n  adr(id BLOB PK, project_id BLOB NOT NULL REFERENCES project(id), external_ref TEXT NOT NULL, number INTEGER,\n      slug TEXT NOT NULL, created_at INTEGER NOT NULL, created_by TEXT NOT NULL,\n      cur_rev INTEGER NOT NULL, cur_status TEXT NOT NULL, UNIQUE(project_id, external_ref))\n  adr_rev(adr_id BLOB NOT NULL REFERENCES adr(id), rev INTEGER NOT NULL, title TEXT NOT NULL, template TEXT NOT NULL,\n          source_format TEXT NOT NULL, source_bytes BLOB NOT NULL, source_sha256 BLOB NOT NULL,\n          content_sha256 BLOB NOT NULL, decided_on TEXT, tx_from INTEGER NOT NULL, tx_to INTEGER,\n          PRIMARY KEY(adr_id, rev))\n  section(id BLOB PK, adr_id BLOB NOT NULL, rev INTEGER NOT NULL, parent_id BLOB, kind TEXT NOT NULL,\n          raw_heading TEXT NOT NULL, ordinal INTEGER NOT NULL, text TEXT NOT NULL, option_key TEXT,\n          byte_start INTEGER NOT NULL, byte_end INTEGER NOT NULL, content_sha256 BLOB NOT NULL)\n  item(id BLOB PK, adr_id BLOB NOT NULL, rev INTEGER NOT NULL, section_id BLOB NOT NULL REFERENCES section(id),\n       kind TEXT NOT NULL, ordinal INTEGER NOT NULL, text TEXT NOT NULL, option_key TEXT,\n       byte_start INTEGER NOT NULL, byte_end INTEGER NOT NULL)\n  status_event(id BLOB PK, adr_id BLOB NOT NULL REFERENCES adr(id), from_status TEXT, to_status TEXT NOT NULL,\n               effective_from TEXT, recorded_at INTEGER NOT NULL, actor TEXT NOT NULL, reason TEXT, superseded_by BLOB)\n  scope(adr_id BLOB NOT NULL, kind TEXT NOT NULL, value TEXT NOT NULL, origin TEXT NOT NULL,\n        confidence REAL NOT NULL DEFAULT 1.0, PRIMARY KEY(adr_id, kind, value))\n  technology(adr_id BLOB NOT NULL, canonical TEXT NOT NULL, role TEXT NOT NULL, PRIMARY KEY(adr_id, canonical, role))\n  chunk(id BLOB PK, adr_id BLOB NOT NULL, rev INTEGER NOT NULL, kind TEXT NOT NULL, ordinal INTEGER NOT NULL,\n        section_id BLOB, text TEXT NOT NULL, text_sha256 BLOB NOT NULL, token_count INTEGER,\n        truncated INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, UNIQUE(adr_id, rev, kind, ordinal))\n  chunk_vector(chunk_id BLOB NOT NULL REFERENCES chunk(id), model TEXT NOT NULL, version INTEGER NOT NULL,\n               collection TEXT NOT NULL, point_id BLOB NOT NULL, token_vectors INTEGER NOT NULL,\n               dense INTEGER NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY(chunk_id, model, version))\n  embed_job(id INTEGER PRIMARY KEY AUTOINCREMENT, chunk_id BLOB NOT NULL, model TEXT NOT NULL, version INTEGER NOT NULL,\n            role TEXT NOT NULL DEFAULT 'document', state TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0,\n            last_error TEXT, created_at INTEGER NOT NULL)\n  ingest_request(project_id BLOB NOT NULL, idempotency_key TEXT NOT NULL, request_sha256 BLOB NOT NULL,\n                 response_json TEXT NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY(project_id, idempotency_key))\n  chunk_fts -> FTS5 virtual table over chunk.text, content='chunk', content_rowid='rowid' is NOT usable with a BLOB PK;\n               instead create `CREATE VIRTUAL TABLE chunk_fts USING fts5(text, chunk_id UNINDEXED, tokenize='unicode61')`\n               and keep it in sync from application code inside the same transaction.\n\nINDEXES required: adr(project_id, cur_status), adr(project_id, number), chunk(adr_id, rev), embed_job(state, id), scope(kind, value), status_event(adr_id, recorded_at).\n\nSTATUS VOCABULARY (closed set, enforced in Rust): proposed | accepted | rejected | deprecated | superseded | withdrawn.\n\nstore.rs API (all functions take &Connection or a pooled handle; use r2d2_sqlite with a max size of 8, plus ONE dedicated write connection behind tokio::sync::Mutex to respect SQLite's single-writer rule):\n  - migrate(conn) applying migrations/0001_init.sql idempotently via PRAGMA user_version\n  - pragmas: journal_mode=WAL, synchronous=NORMAL, foreign_keys=ON, busy_timeout=5000, page_size=8192\n  - create_workspace, ensure_default_workspace\n  - create_project, get_project_by_slug, list_projects\n  - insert_adr_with_revision(...) transactional: adr + adr_rev + sections + items + chunks + embed_jobs + fts rows\n  - get_adr, get_adr_by_external_ref, list_adrs(project, status, limit, offset)\n  - get_current_revision(adr_id), get_sections(adr_id, rev), get_items(adr_id, rev)\n  - record_status_event(adr_id, to_status, actor, reason) which also updates adr.cur_status\n  - list_status_events(adr_id)\n  - set_scopes(adr_id, Vec<Scope>), set_technologies(adr_id, Vec<Technology>), get_scopes, get_technologies\n  - list_chunks(adr_id, rev), get_chunk, chunk_by_id\n  - claim_embed_jobs(limit) -> atomic UPDATE ... RETURNING style claim, finish_embed_job, fail_embed_job\n  - record_chunk_vector(chunk_id, model, version, collection, point_id, token_vectors, dense)\n  - search_lexical(project_id, query, limit) using chunk_fts with bm25 ranking, joined back to chunk/adr\n  - store_ingest_response(project_id, key, sha, json), lookup_ingest_response(project_id, key) -> Option<(sha, json)>\n\nUse `uuid::Uuid::new_v7()` for ids, `Uuid::new_v5(&Uuid::NAMESPACE_OID, name)` for deterministic chunk ids where the name is `adr_id||rev||kind||ordinal`.\n\nAll errors via thiserror in a `StoreError` enum. No `unwrap()` outside tests.\n\nWorker MAY run `cargo test -p adrian-core` for the store tests it writes. Write tests covering: migration idempotency (running twice), the single-writer transaction for insert_adr_with_revision, FTS5 sync, embed_job claim atomicity, and status transition updating cur_status.",
+      "acceptanceCriteria": [
+        "`cargo test -p adrian-core` passes",
+        "migrations/0001_init.sql contains every table, index and the FTS5 virtual table named in the contract",
+        "Running migrate() twice on the same file leaves user_version at 1 and does not error",
+        "Store tests prove: insert_adr_with_revision is atomic (a forced failure mid-way leaves zero rows in adr, adr_rev, section, item, chunk, embed_job)",
+        "Store tests prove chunk_fts returns the right chunk_id for a keyword query and is updated on insert",
+        "Store tests prove claim_embed_jobs never returns the same job to two concurrent callers",
+        "No `unwrap()` or `expect()` in non-test code under crates/adrian-core/src/store.rs",
+        "Pragmas WAL, foreign_keys and busy_timeout are actually applied (test asserts the query results)"
+      ],
+      "status": "in-progress",
+      "auditResult": null,
+      "error": null,
+      "criteriaStatus": [
+        "pending",
+        "pending",
+        "pending",
+        "pending",
+        "pending",
+        "pending",
+        "pending",
+        "pending"
+      ]
+    },
+    {
+      "id": "task-3",
+      "description": "MADR parser producing the typed section/item projection, with a real fixture corpus",
+      "contract": "Implement crates/adrian-core/src/parser/ producing the section/item projection defined in task-2 from MADR Markdown. This is the highest-quality-risk component: get it right with a real corpus.\n\nINPUT: raw Markdown bytes of one ADR.\nOUTPUT: ParsedAdr { title, template, decided_on, status_raw, decision_makers, consulted, informed, sections: Vec<ParsedSection>, items: Vec<ParsedItem>, warnings: Vec<ParseWarning> } where every section and item carries byte_start/byte_end into the ORIGINAL source bytes.\n\nMADR STRUCTURE to support (full, minimal, annotated and bare variants):\n  - Optional YAML front matter delimited by --- at byte 0. Parse with serde_yaml into a struct with fields status, date, decision-makers, consulted, informed, plus capture ALL other keys into a `extra: serde_yaml::Mapping` so nothing is lost. Values may be a string, a list, or a comma-separated string; normalize lists to Vec<String>. Empty values (e.g. `status:` with nothing) must parse as None, not as an error.\n  - Title: the single H1 (`# ...`).\n  - H2 sections and H3 subsections. Map headings to a closed kind set by case-insensitive, punctuation-insensitive matching of the heading text against known MADR headings, including these aliases:\n      context|context and problem statement|problem statement -> context\n      decision drivers|drivers|forces -> drivers\n      considered options|options -> options\n      decision outcome|outcome|decision -> outcome\n      pros and cons of the options|pros and cons -> pros_cons\n      more information|links|references -> more_info\n    H3 under decision outcome: consequences -> consequences, confirmation -> confirmation.\n    Anything unmatched -> other, keeping raw_heading verbatim.\n  - Headings are located by a small Markdown-aware scanner, NOT by regex over lines: fenced code blocks (``` and ~~~) and HTML comments must not be treated as headings. Preserve fenced blocks verbatim inside section text.\n\nITEMS: extract list items from sections with kind in {drivers, options, consequences, pros_cons}:\n  - In `options`: each top-level bullet is an option item, kind=option.\n  - In `consequences`: bullets matching /^\\s*\\*?\\s*Good,/ -> consequence_good; /Bad,/ -> consequence_bad; else consequence_other.\n  - In `pros_cons`: bullets matching /^\\s*\\*?\\s*Good,/ -> pro; /Bad,/ -> con; /Neutral,/ -> neutral.\n  - In `drivers`: each bullet -> driver.\n  - Strip leading list markers and trailing HTML comments from item text, but keep byte spans pointing at the original text including the marker.\n\nOPTION JOIN (critical). MADR deliberately has no option identifiers (see MADR ADR-0006), so the option listed in `considered_options` and the H3 heading under `pros_cons` are related ONLY by title string equality. Implement:\n  - `option_key(title) -> String` = 'opt:' + lowercase(trim(collapse_internal_whitespace(strip_surrounding_quotes(strip_trailing_punctuation(strip_markdown_emphasis(title)))))\n  - Unicode-aware lowercasing and normalization of typographic quotes (‘’“”) and dashes to their ASCII equivalents BEFORE stripping punctuation.\n  - H3 headings under pros_cons get the same option_key and their bullets inherit it.\n  - Record a ParseWarning::UnmatchedOption when an option has no pros_cons entry and ParseWarning::OrphanProsCons when a pros_cons H3 has no matching option. Do NOT fail on either; both are common in real corpora.\n\nFIXTURE CORPUS: commit at least 25 real MADR files under fixtures/madr/, downloaded from public repos in the adr GitHub org (adr/madr docs/decisions, adr/adr-log docs/adr, adr/gadr docs/adr, adr/ad-guidance-tool docs/adr, adr/madrlint docs). Record the source URL for each in fixtures/madr/SOURCES.md. Also hand-write at least 8 synthetic edge cases: minimal template, bare template, front matter absent, front matter with empty status, front matter with YAML list deciders, CRLF line endings, headings inside fenced code blocks, unicode/smart quotes in option titles, an ADR with no considered options, an ADR with an H3 in pros_cons that matches nothing.\n\nWrite a golden projection test: fixtures/madr/expected/<name>.json committed alongside, generated once by the parser and then reviewed by hand for at least 5 files, asserting the parser is stable against regressions. The test asserts equality, not similarity.\n\nWorker MAY run `cargo test -p adrian-core parser` to iterate. Ensure zero panics on the whole corpus: a fuzz-ish test that feeds every fixture plus truncated prefixes of each fixture at every byte boundary must never panic.",
+      "acceptanceCriteria": [
+        "`cargo test -p adrian-core parser` passes",
+        "fixtures/madr contains at least 33 files (25 real + 8 synthetic) and fixtures/madr/SOURCES.md lists a public URL for every real one",
+        "Parsing every fixture never panics, including when fed every truncated prefix at each byte boundary",
+        "Front matter is parsed with serde_yaml and unknown keys are preserved in `extra` (asserted by a test)",
+        "A section heading inside a fenced code block is not treated as a heading (asserted by a test)",
+        "option_key joins the considered-options entry to its pros_cons H3 for at least one fixture that uses smart quotes and differing trailing punctuation",
+        "UnmatchedOption and OrphanProsCons warnings are produced (asserted by tests on the synthetic fixtures)",
+        "Every section and item byte_start/byte_end slices the original source bytes to exactly the text it reports (asserted over the whole corpus)",
+        "Golden projection JSON exists for at least 5 fixtures and is byte-stable across two runs"
+      ],
+      "status": "approved",
+      "auditResult": null,
+      "error": null,
+      "criteriaStatus": [
+        "pending",
+        "pending",
+        "pending",
+        "pending",
+        "pending",
+        "pending",
+        "pending",
+        "pending",
+        "pending"
+      ]
+    },
+    {
+      "id": "task-4",
+      "description": "Semantic chunker that turns the section/item projection into embedding chunks",
+      "contract": "Implement crates/adrian-core/src/chunker.rs. The ADR template IS the chunking scheme; do not use a generic text splitter.\n\nEmit chunks with kind in a closed set: document | context | driver | option | outcome | consequence | confirmation | more_info.\n\nCOMPOSITION RULES:\n  document   = full source text, truncated to the document token budget. Always exactly one per ADR.\n  context    = the `context` section text. One per ADR, omitted if the section is absent or empty.\n  driver     = one chunk per `driver` item.\n  option     = one chunk per option, composed as: option title line, then the pros_cons section's description prose for that option_key, then ALL of that option's pro/con/neutral items as a bullet list. This composition is the whole point: a 3-word bullet alone is useless, and MADR keeps the title and the arguments in different sections joined only by title string equality.\n  outcome    = the `outcome` section text including the justification.\n  consequence= one chunk per `consequence_good` / `consequence_bad` / `consequence_other` item.\n  confirmation = the `confirmation` section text.\n  more_info  = the `more_info` section text.\n\nORDINALS: stable per (adr, kind). `document` and `context` and `outcome` and `confirmation` and `more_info` are always ordinal 0. `driver`, `option`, `consequence` ordinals follow source order starting at 0.\n\nTOKEN BUDGET: chunks are budgeted at 2048 tokens for `document` and 256 tokens for every other kind (matching the embedder's document and query limits in task-6 are NOT relevant here; all chunks are embedded as documents, so the limit is 2048). Provide a `max_tokens` parameter defaulting to 2048. Use a token-counting function injected as a trait so tests can use a deterministic stub and production can use the real tokenizer via the embedder client. Do not hardcode a tokenizer in this crate.\n\nOVERSIZE HANDLING: if a composed chunk exceeds max_tokens, split it on paragraph boundaries first, then on sentence boundaries, then hard-split, and emit multiple chunks with ordinals continuing. Set `truncated = 1` only when a single indivisible unit still exceeds the budget. Never silently drop text.\n\nEMPTY HANDLING: never emit a chunk whose text is empty or whitespace-only.\n\nDETERMINISM: chunk ids are uuid v5 over the name `{adr_id}||{rev}||{kind}||{ordinal}`. Given the same ADR revision the chunker must produce byte-identical ids and text. No HashMap iteration order may influence output; use BTreeMap or sort explicitly.\n\nAlso emit, per ADR: `scopes: Vec<Scope>` and `technologies: Vec<Technology>` extracted heuristically, each with origin='extracted' and a confidence value:\n  - scopes: backtick-quoted path-like strings (containing '/' or ending in a known extension) -> kind='path_prefix', strip trailing '/*' and '**', reject absolute paths, reject any containing '..', reject mid-path wildcards.\n  - technologies: capitalized or backtick-quoted identifiers that also appear as an option title or in the outcome -> role='chosen' if the outcome mentions it, else 'rejected'. Keep this conservative; false positives are worse than misses. Deduplicate.\n\nWorker MAY run `cargo test -p adrian-core chunker`.",
+      "acceptanceCriteria": [
+        "`cargo test -p adrian-core chunker` passes",
+        "One `document` chunk is always produced per ADR, even for an ADR whose sections are all empty",
+        "An `option` chunk contains the option title AND all of that option's pros/cons bullets in one chunk (asserted on a fixture whose pros_cons join requires option_key)",
+        "Chunk ids are identical across two runs on the same input (asserted)",
+        "No emitted chunk has empty or whitespace-only text (asserted over the whole fixture corpus)",
+        "An oversized section produces multiple chunks that together contain every input word, with `truncated` set only when an indivisible unit exceeds the budget (asserted with a stub token counter)",
+        "Scope extraction rejects absolute paths, paths containing '..', and mid-path wildcards (asserted)",
+        "Chunk text for `document` kind equals the source bytes exactly when under budget (asserted)"
+      ],
+      "status": "approved",
+      "auditResult": null,
+      "error": null,
+      "criteriaStatus": [
+        "pending",
+        "pending",
+        "pending",
+        "pending",
+        "pending",
+        "pending",
+        "pending",
+        "pending"
+      ]
+    },
+    {
+      "id": "task-5",
+      "description": "Golden reference embeddings generated from the model's own Python implementation",
+      "contract": "Produce committed golden fixtures that make the Rust embedder in task-6 verifiable.\n\nORACLE: the model's own Python. Use `uv` (available at /home/hanz/.local/bin/uv) in a throwaway project under scripts/oracle/ with pinned versions. Prefer the real path: `pylate` + `sentence-transformers` + `transformers` with `trust_remote_code=True`, loading `DataScience-UIBK/uibk-embedding-v1` at revision b18df82e77306006a1dd0162199f6dfeacb5492e with `document_length=2048, query_length=256`. Install CPU torch via `--index-url https://download.pytorch.org/whl/cpu`.\nIf pylate cannot be installed reproducibly, fall back to a torch script that loads the three safetensors files directly and reimplements the pipeline by transcribing branched_transformer.py and hybrid_tokens.py faithfully. Either way, record in fixtures/golden/manifest.json which path was used, the exact package versions, and the model revision.\n\nOUTPUT: fixtures/golden/cases.json with at least 8 cases. Each case: { name, role: 'query'|'document', text, input_ids: [...], token_count, token_vectors: [[f32;128] ...], dense: [f32;768] }.\nKeep every text SHORT (under 30 tokens) so the fixture stays reviewable, and include at least:\n  - 3 documents: a plain sentence, a sentence with punctuation and a code identifier like `tokio::sync::RwLock`, a sentence with a smart quote\n  - 2 queries\n  - 1 document that is 3 words only\n  - 1 query longer than 64 tokens to exercise query_local_cap (its token_vectors array must therefore be exactly 64 entries)\n  - 1 document with a repeated token\nAlso commit fixtures/golden/README.md explaining exactly how to regenerate: `uv run scripts/oracle/gen_golden.py`.\n\nCRITICAL DETAILS the oracle must honour and the manifest must record, because task-6 depends on them:\n  - input_ids layout is [CLS]=50281, then [Q]=50368 or [D]=50369, then content tokens, then [SEP]=50282\n  - vocab_size 50370; pad token id used by the tokenizer config is 50284 ([MASK])\n  - document truncation to 2048 total tokens, query truncation to 256 total tokens\n  - for queries, only positions < 64 survive into the returned token_vectors\n  - slot vectors occupy output positions 0,1,2\nRecord `token_vectors.len()` per case in the manifest so task-6 can assert the shape rule.\n\nDo not commit model weights. scripts/fetch_weights.sh (created in task-1, refine if needed) downloads model.safetensors, dense_branch.safetensors, 1_HybridTokens/model.safetensors, tokenizer.json, tokenizer_config.json, config.json, config_sentence_transformers.json, sentence_bert_config.json into embedder/weights/ at the pinned revision, and verifies each file's sha256 against a committed embedder/weights/SHA256SUMS. Compute the real sums and commit them.\n\nWorker MAY run the oracle to generate the fixtures. That download is expected to be large; it is a one-time cost.",
+      "acceptanceCriteria": [
+        "fixtures/golden/cases.json exists with at least 8 cases and fixtures/golden/manifest.json records oracle path, package versions and model revision",
+        "At least one case is a query longer than 64 tokens whose token_vectors array length is exactly 64",
+        "Every case's token_vectors entries have exactly 128 floats and every vector has unit L2 norm within 1e-4",
+        "Every token vector's dimension 0 is +sqrt(0.1) within 1e-4 and every slot vector's dimension 0 is -sqrt(0.775) within 1e-4",
+        "The first three token_vectors of every case are slot vectors (negative dim 0) and the rest are token vectors",
+        "fixtures/golden/README.md documents the exact regeneration command",
+        "embedder/weights/SHA256SUMS lists the sha256 of all 8 required files at revision b18df82e77306006a1dd0162199f6dfeacb5492e",
+        "scripts/fetch_weights.sh is idempotent and verifies every sha256, exiting non-zero on mismatch"
+      ],
+      "status": "approved",
+      "auditResult": null,
+      "error": null,
+      "criteriaStatus": [
+        "pending",
+        "pending",
+        "pending",
+        "pending",
+        "pending",
+        "pending",
+        "pending",
+        "pending"
+      ]
+    },
+    {
+      "id": "task-6",
+      "description": "From-scratch candle embedding engine with numerical parity to the golden fixtures, plus its HTTP API",
+      "contract": "Build the `adrian-embedder` crate in embedder/. Rust + candle. CPU only; add a `cuda` cargo feature that is OFF by default and selects Device::Cuda(0) when enabled.\n\nMODEL, reconstructed from the three safetensors files (verified shapes, do not re-derive):\n  model.safetensors (596MB, keys have NO `model.` prefix):\n    embeddings.tok_embeddings.weight [50370,768] F32, embeddings.norm.weight [768]\n    layers.{0..21}.attn.Wqkv.weight [2304,768], .attn.Wo.weight [768,768]\n    layers.{0..21}.mlp.Wi.weight [2304,768], .mlp.Wo.weight [768,1152]\n    layers.1..21 also have .attn_norm.weight [768]; layer 0 does NOT (ModernBERT convention)\n    layers.*.mlp_norm.weight [768], final_norm.weight [768]\n    All linear layers are bias-free. All norms are bias-free.\n  dense_branch.safetensors (80MB): dense_layers.{0..3}.{attn.Wqkv,attn.Wo,attn_norm,mlp.Wi,mlp.Wo,mlp_norm}, dense_norm.weight\n 1_HybridTokens/model.safetensors (41MB):\n    linear.weight [128,768]  (ColBERT token projection, no bias)\n    local_rotation [128,127] F32   <-- ALREADY PRESENT, do not recompute QR\n    dense_rotation [768,381] F32   <-- ALREADY PRESENT, do not recompute QR\n    latents [512,768], norm_x.{weight,bias} [768], norm_latents.{weight,bias} [768]\n    to_q.weight [768,768] (no bias), to_kv.weight [1536,768] (no bias), to_out.{weight,bias} [768,768]\n    norm_ff.{weight,bias} [768], ff.0.weight [6144,768], ff.0.bias [6144], ff.2.weight [768,3072], ff.2.bias [768]\n\nCONFIG NOTES (these will bite you):\n  - config.json has global_rope_theta: null and local_rope_theta: null. Deserialize as Option<f64> and default to 160000.0 and 10000.0. Candle's own modernbert::Config uses plain f64 and will fail to deserialize.\n  - hidden 768, layers 22, heads 12, intermediate 1152, layer_norm_eps 1e-5, local_attention 128, global_attn_every_n_layers 3, max_position_embeddings 8192\n  - shared_layers = 18, so the token top is layers 18..22 + final_norm, and the dense top is dense_layers 0..4 + dense_norm\n\nFORWARD PIPELINE (transcribe exactly; this mirrors branched_transformer.py and hybrid_tokens.py):\n  1. tokens: prepend [CLS]=50281 then [Q]=50368 for role=query or [D]=50369 for role=document, append [SEP]=50282.\n     Truncate to 256 total tokens for role=query, 2048 for role=document. Use the tokenizers crate with tokenizer.json.\n     The `[Q] ` and `[D] ` entries in tokenizer.json are single added tokens with ids 50368 and 50369 (they include a trailing space); look them up rather than string-matching.\n  2. hidden = norm(tok_embeddings(ids))\n  3. run layers 0..18 -> trunk\n  4. token_states = final_norm(run layers 18..22 over trunk)\n  5. dense_states = dense_norm(run dense_layers 0..4 over trunk)\n  6. Attention: full attention for layers where i % 3 == 0, sliding window (window 128) otherwise. Use the same masking convention as candle-transformers/src/models/modernbert.rs (prepare_4d_attention_mask + get_local_attention_mask). RoPE theta 160000.0 for global layers, 10000.0 for local layers.\n  7. LAP pooling over dense_states: refine(x) = x + to_out( SDPA( q=to_q(norm_x(x)), k,v = to_kv(norm_latents(latents)) ) ) then x + ff(norm_ff(x)), where ff = Linear(768->6144) then GEGLU(a,b)=a*gelu(b) then Linear(3072->768). SDPA is unmasked, scale 1/sqrt(96), 8 heads of head_dim 96. Then pooled = masked mean of refined over real tokens, then L2 normalize -> [768].\n  8. token path: u = normalize( linear(token_states) @ local_rotation ) then normalize again; token_vector = [sqrt(1-0.9)=0.31622777, sqrt(0.9)*u ] -> 128 dims.\n  9. dense path: g = pooled @ dense_rotation -> [381]; view as 3 slices of 127; L2-normalize each slice; slot_vector_s = [ -sqrt(1-0.225)=-0.88034084, sqrt(0.225)*slice_s ] -> 128 dims.\n  10. output vector list = [slot_0, slot_1, slot_2, token_vector_2, token_vector_3, ...] i.e. slots OVERWRITE output positions 0,1,2.\n  11. role=query: drop every output vector whose position >= 64 (query_local_cap). role=document: keep all.\n  12. Return `dense` = the pooled 768 vector (unit norm, before rotation) so callers can build a separate dense index.\n\nIMPLEMENTATION NOTES: vendor candle's modernbert.rs into the crate (dual MIT/Apache-2.0, keep the header) and expose a struct that runs the first N layers and returns trunk states, so the branched tail is possible. Candle's ModernBert has private fields and runs all layers, so vendoring is required. Batch size 1 is acceptable for v0.1.0; process texts sequentially and expose an optional small batch later.\n\nHTTP API (axum, bind 0.0.0.0:8081):\n  GET  /healthz   -> {\"status\":\"ok\"}\n  GET  /v1/models -> {model:\"uibk-embedding-v1\", version:1, dim:128, dense_dim:768, max_doc_tokens:2048, max_query_tokens:256, query_local_cap:64, device:\"cpu\"|\"cuda\", revision:\"b18df82e...\"}\n  POST /v1/embed  -> request { role: \"document\"|\"query\" (required, no default), texts: [String], return_dense: bool }\n                     response { model, version, dim, dense_dim, items: [{ tokens, truncated, vectors: [[f32;128]], dense: Option<[f32;768]> }] }\n  Return 400 when role is missing or not one of the two values. Return 422 when texts is empty or longer than 256 entries.\n\nPARITY TEST: tests/parity.rs reads fixtures/golden/cases.json and embedder/weights (path from ADRIAN_WEIGHTS_DIR, default ../../embedder/weights relative to the crate). For each case assert:\n  - input_ids match the oracle exactly\n  - vectors.len() matches the oracle\n  - every vector's cosine similarity to the oracle vector is >= 0.9999\n  - max absolute elementwise difference <= 1e-3\nIf weights are missing, the test must fail with a message telling the operator to run scripts/fetch_weights.sh, unless ADRIAN_SKIP_PARITY=1 is set, in which case it prints a loud skip reason.\n\nWorker MAY run `cargo test` in embedder/ (after scripts/fetch_weights.sh) to converge on parity. Expect to iterate on attention masking and the GEGLU/normalization order; do not weaken the thresholds to make it pass.",
+      "acceptanceCriteria": [
+        "`cargo build` succeeds in embedder/ with zero warnings from the crate's own code",
+        "`cargo test` in embedder/ passes, including the parity test against fixtures/golden/cases.json",
+        "Parity holds at cosine >= 0.9999 and max abs diff <= 1e-3 for every case, with thresholds unchanged from the contract",
+        "A test asserts query role returns exactly 64 vectors for the >64-token query case and document role returns all vectors",
+        "A test asserts every returned vector has unit L2 norm within 1e-4",
+        "GET /v1/models reports dim 128, dense_dim 768, query_local_cap 64 and the pinned revision",
+        "POST /v1/embed returns 400 for a missing or invalid role and 422 for an empty texts array (asserted by tests)",
+        "The `cuda` feature exists and is not enabled by default; `cargo build` without features is CPU only",
+        "Vendored modernbert source retains its upstream MIT/Apache-2.0 attribution header"
+      ],
+      "status": "approved",
+      "auditResult": null,
+      "error": null,
+      "criteriaStatus": [
+        "pending",
+        "pending",
+        "pending",
+        "pending",
+        "pending",
+        "pending",
+        "pending",
+        "pending",
+        "pending"
+      ]
+    },
+    {
+      "id": "task-7",
+      "description": "Embedder container image with baked, SHA-verified weights and GPU-ready build structure",
+      "contract": "Finalise docker/Dockerfile.embedder so the embedder runs in the compose stack with no network access at runtime.\n\nBUILD: multi-stage. Builder stage `rust:1.93-slim` (add pkg-config, libssl-dev, cmake, build-essential if required by the dependency graph). Dependency-cache layer using a stub src/main.rs before copying real sources. Copy embedder/ (excluding weights/ via .dockerignore) and build `--release`.\n\nWEIGHTS STAGE: a dedicated stage that downloads the 8 files from huggingface at the pinned revision b18df82e77306006a1dd0162199f6dfeacb5492e into /models, then verifies every sha256 against embedder/weights/SHA256SUMS and fails the build on mismatch. Do NOT download weights at runtime. Runtime stage copies /models in.\n\nRUNTIME: debian:bookworm-slim with ca-certificates only. Non-root user (uid 10001). ENV ADRIAN_WEIGHTS_DIR=/models, EMBEDDER_BIND=0.0.0.0:8081. HEALTHCHECK using a tiny static probe (do not require curl; either install curl or add a `--healthcheck` subcommand to the binary that exits 0/1). EXPOSE 8081 (internal only, not published in compose).\n\nAlso add a `.dockerignore` at repo root excluding target/, embedder/target/, embedder/weights/, .git/, fixtures/golden/cases.json is NOT excluded.\n\nAdd the `--healthcheck` subcommand to the embedder binary if you choose that route; it must perform a real GET against the local /healthz and exit non-zero on failure.\n\nAdd `--verify-weights` startup behaviour: the binary verifies every file's sha256 against /models/SHA256SUMS at startup and refuses to serve on mismatch, logging the offending file.\n\nWorker MAY run `docker build -f docker/Dockerfile.embedder -t adrian-embedder:test .` and a single `docker run --rm adrian-embedder:test --verify-weights` to confirm. Do NOT run a long-lived container or the full compose stack.",
+      "acceptanceCriteria": [
+        "`docker build -f docker/Dockerfile.embedder -t adrian-embedder:test .` succeeds",
+        "The image contains all 8 weight/config files under /models (asserted by listing them in a one-shot container run)",
+        "The binary refuses to start when a weights file is corrupted: a test run with a deliberately truncated file exits non-zero and names the file",
+        "The image runs as a non-root user (asserted via `id -u` in a one-shot container run)",
+        "`.dockerignore` excludes target/, embedder/target/ and embedder/weights/ so the build context stays small",
+        "The Dockerfile has a distinct weights stage so task-7's download is cached independently of source changes",
+        "No curl or shell-based healthcheck is required at runtime; the HEALTHCHECK uses the binary's own subcommand or an installed probe"
+      ],
+      "status": "approved",
+      "auditResult": null,
+      "error": null,
+      "criteriaStatus": [
+        "pending",
+        "pending",
+        "pending",
+        "pending",
+        "pending",
+        "pending",
+        "pending"
+      ]
+    },
+    {
+      "id": "task-8",
+      "description": "Ingest pipeline, Qdrant collection management, and the background embed worker",
+      "contract": "Wire the pieces into a working write path and index in crates/adrian-core.\n\nINGEST (crates/adrian-core/src/ingest.rs):\n  ingest(project_slug, external_ref, source_bytes, source_format, actor, declared_scopes) -> IngestOutcome\n  1. sha256 the source. If (project, external_ref) exists with the same source_sha256, return Unchanged with the existing adr id.\n  2. If (project, external_ref) exists with a different hash, create a new revision (rev+1), set tx_to on the previous revision, update adr.cur_rev, re-run parse/chunk, insert new sections/items/chunks and enqueue embed jobs. Return Revised.\n  3. Otherwise parse, chunk, insert as rev 1, return Created.\n  4. If the parsed front matter status maps to the closed status vocabulary, record an initial status_event; otherwise default to `proposed` and add a warning.\n  5. Merge declared_scopes (origin='declared', confidence 1.0) with extracted scopes (origin='extracted'), deduplicating on (kind, value) and preferring declared.\n  All inside one transaction. Enqueue one embed_job per chunk with state='pending'.\n\nIDEMPOTENCY: ingest is called through a wrapper that consults ingest_request on (project_id, idempotency_key). Same key + same request sha -> replay stored response. Same key + different sha -> return a Conflict error mapped to HTTP 409.\n\nQDRANT CLIENT (crates/adrian-core/src/qdrant.rs) using reqwest against ADRIAN_QDRANT_URL:\n  - ensure_collection(name): create if absent with\n      vectors: {\n        \"colbert\": { size: 128, distance: \"Cosine\", multivector_config: { comparator: \"max_sim\" } },\n        \"dense\":   { size: 768, distance: \"Cosine\" }\n      }\n    then wait until the collection reports green via GET /collections/{name}.\n  - upsert_chunk(point): PUT /collections/{name}/points with payload\n      { adr_id, project_id, number, rev, chunk_id, chunk_kind, option_key, template, status, model, model_version, chunk_version: 1 }\n    and NO chunk text in the payload. Point id is uuid v5 over `chunk_id||model||version`.\n  - delete_adr_points(adr_id): delete by payload filter on adr_id (used when a revision supersedes).\n  - update_status_payload(adr_id, status): set_payload over a filter on adr_id.\n  - search(project_id, query_vectors: Vec<[f32;128]>, dense: [f32;768], limit) implementing two-stage retrieval:\n      stage 1: POST /collections/{name}/points/query with using=\"dense\", query=dense, limit=200, filter on project_id\n      stage 2: same endpoint with using=\"colbert\", query=query_vectors, limit=max(limit*5, 50), filter on point ids from stage 1\n    If stage 2 returns an error containing \"prefetch\" or the API rejects the id filter, fall back to a single-stage colbert query and log a warning.\n    Return Vec<ScoredChunk { chunk_id, adr_id, score }>.\n  - All calls retry 3 times with exponential backoff on 5xx and connection errors.\n\nEMBED WORKER (crates/adrian-core/src/worker.rs):\n  A tokio task started by `adrian serve` when ADRIAN_WORKER=1 (default 1).\n  Loop: claim up to 16 pending embed_jobs -> batch them by role (always 'document' in v0.1.0) -> POST /v1/embed to ADRIAN_EMBEDDER_URL -> on success record chunk_vector and upsert the Qdrant point, mark job done -> on failure increment attempts and set last_error; after 5 attempts mark 'failed'.\n  Sleep 250ms when no work. Must shut down cleanly on SIGTERM, finishing the in-flight batch.\n  Log a warning if the embedder reports `truncated: true` for any chunk.\n\nRECONCILE: `adrian check` subcommand that walks SQLite and reports (does not fix) chunks with no chunk_vector row, embed jobs in 'failed', and Qdrant point counts per collection. Exit non-zero if any discrepancy is found, so it can be used in CI.\n\nWorker MAY run `cargo test -p adrian-core` and, if a Qdrant container is reachable, an integration test gated behind ADRIAN_QDRANT_URL being set. Integration tests must skip loudly when the env var is absent.",
+      "acceptanceCriteria": [
+        "`cargo test -p adrian-core` passes",
+        "Ingesting the same bytes twice under the same external_ref returns Unchanged and creates no second revision (asserted)",
+        "Ingesting changed bytes under the same external_ref creates rev 2, sets tx_to on rev 1, and enqueues embed jobs for the new chunks only (asserted)",
+        "Idempotency: the same idempotency_key with the same body replays the stored response; with a different body it returns Conflict (asserted)",
+        "ensure_collection creates a collection whose config shows two named vectors, colbert with multivector_config comparator max_sim and dense with size 768 (asserted against a live Qdrant when ADRIAN_QDRANT_URL is set, skipped loudly otherwise)",
+        "The worker marks jobs done on success and increments attempts with last_error on failure, reaching 'failed' after 5 attempts (asserted with a stub embedder server)",
+        "Upserted payload contains no chunk text field (asserted)",
+        "`adrian check` exits non-zero when a chunk has no chunk_vector row (asserted)",
+        "No `unwrap()` outside tests in qdrant.rs, worker.rs, ingest.rs"
+      ],
+      "status": "approved",
+      "auditResult": null,
+      "error": null,
+      "criteriaStatus": [
+        "pending",
+        "pending",
+        "pending",
+        "pending",
+        "pending",
+        "pending",
+        "pending",
+        "pending",
+        "pending"
+      ]
+    },
+    {
+      "id": "task-9",
+      "description": "REST API surface in adrian-api and the `adrian serve` binary",
+      "contract": "Implement the axum REST API in crates/adrian-api and wire it into `adrian serve` in crates/adrian-bin.\n\nAUTH: if ADRIAN_API_TOKEN is non-empty, require `Authorization: Bearer <token>` on every /v1 route; return 401 otherwise. /healthz and /mcp are exempt from the bearer check only if ADRIAN_MCP_TOKEN is empty. Keep it that simple; document that actor identity is unverified in v0.1.0.\n\nERROR MODEL: one ApiError enum mapping to a JSON body { error: { code, message, details? } } with codes: invalid_request, not_found, conflict, upstream_error, internal. Use proper status codes (400/404/409/502/500). No panics on malformed input; enforce body size limits (default 4MB) and reject oversized bodies with 413.\n\nENDPOINTS:\n  GET  /healthz -> { status, version, embedder: {reachable, model, version}, qdrant: {reachable, collection} }\n  GET  /v1/models -> passthrough of the embedder's /v1/models plus the active collection name\n  POST /v1/projects           { slug, name, repo_url? } -> 201 { id, slug, name }\n  GET  /v1/projects           -> [ { id, slug, name, adr_count } ]\n  POST /v1/adrs               { project, external_ref, source, source_format?, scopes?, idempotency_key? }\n                              source is the raw ADR text. Header `Idempotency-Key` also accepted.\n                              -> 201 { id, rev, status, chunks: n, warnings: [...] }\n  GET  /v1/adrs               ?project=&status=&limit=&offset= -> [ { id, number, title, status, external_ref, rev, created_at } ]\n  GET  /v1/adrs/{id}          ?rev= -> full record: adr, current revision, sections, items, scopes, technologies, chunks, status_events\n  GET  /v1/adrs/{id}/chunks   -> [ { id, kind, ordinal, text, token_count, embedded: bool } ]\n  POST /v1/adrs/{id}/transition { to, reason?, actor } -> { status, event_id }; reject transitions outside the closed vocabulary with 400\n  POST /v1/search             { query, project?, status?, limit? } ->\n                              { results: [ { adr_id, title, status, score, matched_chunks: [ { chunk_id, kind, text, score } ] } ] }\n                              Implements: embed query with role=query -> qdrant two-stage search -> group by adr_id keeping the best score per ADR ->\n                              also run store.search_lexical -> fuse the two ranked lists with reciprocal rank fusion at k=60 ->\n                              hydrate chunk text from SQLite. Never return chunk text from Qdrant.\n  GET  /v1/adrs/{id}/similar  ?limit= -> same shape as search results, using the ADR's own document chunks' dense vectors\n  GET  /v1/context            ?path=&project=&limit= -> decisions whose scope matches the path prefix, ranked by scope specificity then recency.\n                              Path prefix matching is a SQL LIKE against scope.value with the query path's ancestor prefixes; scope kind 'path_prefix'.\n  POST /v1/export             { project, format: \"json\"|\"madr\", adr_ids? } -> for json, canonical JSON per ADR with schema_version \"1.0\"; for madr,\n                              MADR Markdown rendered from the projection. If a record's source_format is markdown and it was never modified after\n                              ingest, return source_bytes verbatim.\n\n`adrian serve`: build the config, open the pool, migrate, ensure the default workspace and the Qdrant collection, spawn the embed worker, then serve. Graceful shutdown on SIGTERM/SIGINT with a 10s drain. Log the bound address and the active collection on startup.\n\nRequest/response types live in crates/adrian-api/src/dto.rs with serde and are the single source of truth for the JSON shapes. Every handler has a `#[tracing::instrument]` span.\n\nWorker MAY run `cargo test -p adrian-api` with `axum::body::Body` + `tower::ServiceExt::oneshot` handler tests. No live Qdrant needed for handler tests; stub the qdrant and embedder clients behind traits.",
+      "acceptanceCriteria": [
+        "`cargo test -p adrian-api` passes",
+        "Handler tests cover 201 on project create, 404 on unknown adr id, 409 on idempotency conflict, 400 on an invalid transition status, and 413 on an oversized body",
+        "Bearer auth is enforced when ADRIAN_API_TOKEN is set and bypassed when it is empty (asserted by tests)",
+        "POST /v1/search fuses lexical and vector results with RRF and returns matched_chunks hydrated from SQLite, with no chunk text coming from the Qdrant client (asserted with stub clients)",
+        "GET /v1/context returns only decisions whose scope value is an ancestor prefix of the queried path (asserted)",
+        "POST /v1/export returns byte-identical source for an unmodified imported ADR (asserted)",
+        "Every endpoint returns the documented JSON error shape on failure (asserted)",
+        "No `unwrap()` outside tests in adrian-api",
+        "`adrian serve` shuts down within 10s of SIGTERM (asserted by a test that spawns the binary and signals it)"
+      ],
+      "status": "approved",
+      "auditResult": null,
+      "error": null,
+      "criteriaStatus": [
+        "pending",
+        "pending",
+        "pending",
+        "pending",
+        "pending",
+        "pending",
+        "pending",
+        "pending",
+        "pending"
+      ]
+    },
+    {
+      "id": "task-10",
+      "description": "MCP server: streamable HTTP transport plus a stdio proxy subcommand",
+      "contract": "Implement MCP in crates/adrian-api/src/mcp/ (and a thin wrapper in adrian-bin for the stdio proxy).\n\nTRANSPORT: JSON-RPC 2.0 over HTTP at POST /mcp on the same axum router and same port as REST. Support the streamable-HTTP subset needed by coding agents: a single JSON-RPC request per POST, JSON response with content-type application/json, and `Accept: application/json, text/event-stream` tolerated by responding with JSON. Do not implement SSE streaming of partial results; return one complete JSON-RPC response per request. Return 400 with a JSON-RPC error object for malformed envelopes. Support batch arrays by processing sequentially.\n\nPROTOCOL METHODS: initialize (return protocolVersion \"2025-06-18\", capabilities.tools = {}, serverInfo {name:\"adrian\", version}), notifications/initialized (204), ping, tools/list, tools/call. Return JSON-RPC error -32601 for unknown methods, -32602 for invalid params, -32603 for internal.\n\nTOOLS (exact names, input schemas via serde_json json! and advertised in tools/list):\n  adr_search { query: string, project?: string, status?: string, limit?: integer (default 5, max 50) }\n  adr_get { id?: string, project?: string, number?: integer }   (exactly one of id or project+number)\n  adr_list { project?: string, status?: string, limit?: integer (default 20, max 100) }\n  adr_submit { project: string, external_ref: string, source: string, scopes?: string[], actor: string, idempotency_key?: string }\n  adr_similar { id: string, limit?: integer (default 5, max 50) }\n  adr_transition { id: string, to: string, reason?: string, actor: string }\n  adr_context_for { path: string, project?: string, limit?: integer (default 10, max 50) }\n\nEach tool returns content: [{ type: \"text\", text: <compact JSON> }] plus `isError: false`. On failure return isError: true with a readable message rather than a JSON-RPC error, per MCP convention for tool-level failures.\n\nSAFETY RULE, enforce in code: adr_submit from any actor always creates the ADR with status `proposed` and never `accepted`, regardless of what the source front matter says. Only adr_transition can move an ADR to `accepted`. Write this as an explicit check with a test.\n\nTOOL DESCRIPTIONS: each tool's description in tools/list must be a single actionable sentence written for an LLM consumer, stating when to use it, e.g. \"Search architectural decisions by natural language; returns decisions with the matching sections and scores.\"\n\nSTDIO PROXY: `adrian mcp-stdio --url http://127.0.0.1:8080 [--token T]` reads newline-delimited JSON-RPC from stdin, forwards each to the daemon's /mcp, and writes the response to stdout. It must not buffer or reorder, must exit 0 on stdin EOF, and must log to stderr only (stdout is the protocol channel).\n\nWorker MAY run `cargo test -p adrian-api mcp` and a manual pipe test of the stdio proxy against a running daemon. Keep unit tests hermetic with a stub daemon.",
+      "acceptanceCriteria": [
+        "`cargo test -p adrian-api` passes, including MCP tests",
+        "initialize returns protocolVersion and a tools capability; tools/list returns all 7 tools with input schemas and non-empty descriptions",
+        "A JSON-RPC batch array is processed and returns an array of responses in order (asserted)",
+        "Unknown method returns -32601 and invalid params return -32602 (asserted)",
+        "A tool-level failure returns isError: true with a message and HTTP 200 (asserted)",
+        "adr_submit always produces status `proposed` even when the source front matter says `accepted` (asserted)",
+        "The stdio proxy round-trips a request through a stub daemon and writes nothing but JSON-RPC to stdout (asserted)",
+        "POST /mcp is reachable on the same port as REST and tolerates `Accept: application/json, text/event-stream` (asserted)"
+      ],
+      "status": "approved",
+      "auditResult": null,
+      "error": null,
+      "criteriaStatus": [
+        "pending",
+        "pending",
+        "pending",
+        "pending",
+        "pending",
+        "pending",
+        "pending",
+        "pending"
+      ]
+    },
+    {
+      "id": "task-11",
+      "description": "Export, end-to-end compose smoke test, and documentation",
+      "contract": "Finish the deliverable.\n\nEXPORT (crates/adrian-core/src/export.rs):\n  - canonical JSON: stable key order, schema_version \"1.0\", all adr/adr_rev/section/item/scope/technology/status_event fields with ids rendered as lowercase hyphenated UUID strings and timestamps as RFC3339. Two runs on the same data must be byte-identical.\n  - MADR Markdown rendering from the projection: front matter with status, date, decision-makers, consulted, informed (omit empty keys), H1 title, then the sections in canonical MADR order with raw_heading preserved, options as a bullet list, pros_cons as H3 per option with Good/Neutral/Bad bullets, and `Chosen option: \"X\", because Y` reconstructed in Decision Outcome.\n  - Round-trip test: parse -> render -> parse again produces the same projection for every fixture in fixtures/madr. This is the trust property; assert equality of the projection, not of the bytes.\n\nEND-TO-END COMPOSE SMOKE TEST (scripts/smoke.sh, also a `make smoke` target):\n  docker compose up -d --build; wait for adrian /healthz to report embedder and qdrant reachable (timeout 180s);\n  create a project; ingest 3 ADRs from fixtures/madr via POST /v1/adrs; poll until all chunks report embedded: true (timeout 120s);\n  POST /v1/search with a natural-language query and assert at least one result with a non-empty matched_chunks;\n  GET /v1/adrs/{id} and assert sections are non-empty; GET /v1/context?path=crates/api/src/main.rs and assert a 200;\n  POST /v1/export with format=madr and assert the output re-ingests without error;\n  docker compose down -v. The script must exit non-zero on any failure and print the failing step.\n\nDOCUMENTATION:\n  README.md: what Adrian is, the three-container architecture with a diagram (ASCII is fine), quickstart (docker compose up, then a curl example for ingest and search), the MCP connection snippet for a coding agent (both HTTP and stdio forms), the environment variable table, and an explicit \"What v0.1.0 does not do\" section listing clustering into decision points, bitemporal valid-time queries, scope decay tracking, multi-tenancy, and verified actor identity.\n  docs/ARCHITECTURE.md: the write path (ingest -> parse -> chunk -> embed -> index) and read path (search -> RRF fusion -> hydrate) as a sequence, the SQLite-as-source-of-truth and Qdrant-as-derived-index rule with the reconcile story, the chunk kind table with composition rules, the identity scheme (uuidv7 adr ids, external_ref uniqueness, source_sha256 rename detection, uuidv5 chunk ids), and the embedder contract including the [Q]/[D] role split and why role must never be inferred.\n  docs/API.md: every REST endpoint and every MCP tool with request/response examples.\n  docs/ADR-SUPPORT.md: which MADR variants parse, the option_key join and why it exists (citing MADR ADR-0006), and the known parse limitations.\n\nAlso add a .github/workflows/ci.yml running cargo fmt --check, cargo clippy -D warnings, cargo test on both workspaces, and a docker build of both images (no compose up in CI).\n\nWorker MAY run scripts/smoke.sh once to confirm. It is the slowest step; do not loop on it.",
+      "acceptanceCriteria": [
+        "`cargo test` passes at repo root and in embedder/",
+        "Round-trip test passes: parse -> render -> parse yields an identical projection for every fixture in fixtures/madr",
+        "Canonical JSON export is byte-identical across two runs on the same data (asserted)",
+        "scripts/smoke.sh runs green end to end against the compose stack and exits non-zero when any step fails",
+        "README.md documents quickstart, both MCP connection forms, the env var table, and an explicit out-of-scope list",
+        "docs/ARCHITECTURE.md documents both paths, the source-of-truth rule, the chunk table, the identity scheme and the [Q]/[D] role split",
+        "docs/API.md documents every REST endpoint and all 7 MCP tools",
+        "docs/ADR-SUPPORT.md documents the option_key join and cites MADR ADR-0006",
+        ".github/workflows/ci.yml exists and runs fmt, clippy, both test suites, and both docker builds",
+        "`cargo fmt --check` and `cargo clippy -- -D warnings` are clean on both workspaces"
+      ],
+      "status": "approved",
+      "auditResult": null,
+      "error": null,
+      "criteriaStatus": [
+        "pending",
+        "pending",
+        "pending",
+        "pending",
+        "pending",
+        "pending",
+        "pending",
+        "pending",
+        "pending",
+        "pending"
+      ]
+    }
+  ],
+  "result": null,
+  "auditFeedback": null,
+  "auditLog": [],
+  "yoloMode": true,
+  "yoloSessionId": "01a202d8-c507-7311-b696-fdf1ce8f38b9",
+  "createdAt": 1795354227474,
+  "updatedAt": 1795355096009
+}

@@ -1,0 +1,91 @@
+name: adrian
+
+# Three containers on one internal network. Only `adrian` publishes a port, because it is
+# the only thing a user or a coding agent ever talks to. Qdrant and the embedder are
+# implementation details of the database, not services in their own right.
+
+networks:
+  adrian:
+    name: adrian
+    driver: bridge
+
+volumes:
+  qdrant_storage:
+  adrian_data:
+
+services:
+  qdrant:
+    image: qdrant/qdrant:v1.20.2
+    container_name: adrian-qdrant
+    restart: unless-stopped
+    networks:
+      - adrian
+    volumes:
+      - qdrant_storage:/qdrant/storage
+    environment:
+      QDRANT__SERVICE__HTTP_PORT: "6333"
+      QDRANT__SERVICE__GRPC_PORT: "6334"
+      QDRANT__LOG_LEVEL: "INFO"
+    # No `ports` on purpose: the vector index is not part of the public surface.
+    healthcheck:
+      test: ["CMD", "bash", "-c", ":> /dev/tcp/127.0.0.1/6333"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 5s
+
+  embedder:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.embedder
+    image: adrian-embedder:0.1.0
+    container_name: adrian-embedder
+    restart: unless-stopped
+    networks:
+      - adrian
+    environment:
+      EMBEDDER_BIND: "0.0.0.0:8081"
+      ADRIAN_WEIGHTS_DIR: "/models"
+      RUST_LOG: "info"
+    # No `ports`: the engine is reached only by adrian, over the internal network.
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/adrian-embedder", "healthcheck"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 60s
+
+  adrian:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.adrian
+    image: adrian:0.1.0
+    container_name: adrian
+    restart: unless-stopped
+    networks:
+      - adrian
+    ports:
+      - "${ADRIAN_PORT:-8080}:8080"
+    volumes:
+      - adrian_data:/data
+    environment:
+      ADRIAN_BIND: "0.0.0.0:8080"
+      ADRIAN_DB_PATH: "/data/adrian.db"
+      ADRIAN_QDRANT_URL: "http://qdrant:6333"
+      ADRIAN_EMBEDDER_URL: "http://embedder:8081"
+      ADRIAN_COLLECTION: "${ADRIAN_COLLECTION:-adr_chunks__uibk_v1}"
+      ADRIAN_API_TOKEN: "${ADRIAN_API_TOKEN:-}"
+      ADRIAN_MCP_TOKEN: "${ADRIAN_MCP_TOKEN:-}"
+      ADRIAN_WORKER: "${ADRIAN_WORKER:-1}"
+      ADRIAN_LOG: "${ADRIAN_LOG:-info}"
+    depends_on:
+      qdrant:
+        condition: service_healthy
+      embedder:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 20s

@@ -1,0 +1,59 @@
+# syntax=docker/dockerfile:1.7
+#
+# The Adrian daemon: REST plus MCP on one port, with the background embed worker.
+# Qdrant and the embedding engine are separate containers on the same internal network.
+
+FROM rust:1.93-slim AS builder
+
+WORKDIR /build
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends pkg-config libssl-dev \
+ && rm -rf /var/lib/apt/lists/*
+
+# Dependency cache: build with a stub main so that a source-only change does not force a
+# full recompile of the dependency graph.
+COPY Cargo.toml Cargo.lock ./
+COPY crates/adrian-core/Cargo.toml crates/adrian-core/Cargo.toml
+COPY crates/adrian-api/Cargo.toml crates/adrian-api/Cargo.toml
+COPY crates/adrian-bin/Cargo.toml crates/adrian-bin/Cargo.toml
+RUN mkdir -p crates/adrian-core/src crates/adrian-api/src crates/adrian-bin/src \
+ && echo 'pub fn stub() {}' > crates/adrian-core/src/lib.rs \
+ && echo 'pub fn stub() {}' > crates/adrian-api/src/lib.rs \
+ && echo 'fn main() {}' > crates/adrian-bin/src/main.rs \
+ && cargo build --release --bin adrian \
+ && rm -rf crates/adrian-core/src crates/adrian-api/src crates/adrian-bin/src
+
+COPY crates ./crates
+COPY migrations ./migrations
+# Touch the sources so cargo rebuilds the crates and not just the stub.
+RUN touch crates/adrian-core/src/lib.rs crates/adrian-api/src/lib.rs crates/adrian-bin/src/main.rs \
+ && cargo build --release --bin adrian
+
+FROM debian:bookworm-slim AS runtime
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates curl tini \
+ && rm -rf /var/lib/apt/lists/* \
+ && groupadd --gid 10001 adrian \
+ && useradd --uid 10001 --gid 10001 --create-home adrian \
+ && mkdir -p /data \
+ && chown adrian:adrian /data
+
+COPY --from=builder /build/target/release/adrian /usr/local/bin/adrian
+
+ENV ADRIAN_BIND=0.0.0.0:8080 \
+    ADRIAN_DB_PATH=/data/adrian.db \
+    ADRIAN_QDRANT_URL=http://qdrant:6333 \
+    ADRIAN_EMBEDDER_URL=http://embedder:8081 \
+    ADRIAN_COLLECTION=adr_chunks__uibk_v1 \
+    ADRIAN_LOG=info \
+    RUST_BACKTRACE=1
+
+USER adrian:adrian
+WORKDIR /home/adrian
+VOLUME ["/data"]
+EXPOSE 8080
+
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/adrian"]
+CMD ["serve"]

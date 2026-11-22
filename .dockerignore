@@ -1,0 +1,18 @@
+# Build context exclusions. Kept small on purpose: the embedder image downloads the model
+# weights from the network at build time and verifies them against a committed checksum
+# file, so the 717 MB of weights never enter the build context.
+target/
+embedder/target/
+.git/
+.gitignore
+**/*.rs.bk
+**/mutants.out*/
+.idea/
+.vscode/
+.env
+.env.*
+!.env.example
+
+# Model weights are fetched at build time; only the checksum manifest is copied in.
+embedder/weights/*
+!embedder/weights/SHA256SUMS

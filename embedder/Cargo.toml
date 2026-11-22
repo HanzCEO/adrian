@@ -1,0 +1,41 @@
+[workspace]
+
+[package]
+name = "adrian-embedder"
+description = "uibk-embedding-v1 inference engine for Adrian, implemented with candle"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+license = "Apache-2.0"
+authors = ["Adrian contributors"]
+repository = "https://github.com/HanzCEO/adrian"
+
+[[bin]]
+name = "adrian-embedder"
+path = "src/main.rs"
+
+[features]
+default = []
+cuda = ["candle-core/cuda", "candle-nn/cuda", "candle-transformers/cuda"]
+
+[dependencies]
+candle-core = "=0.11.0"
+candle-nn = "=0.11.0"
+candle-transformers = "=0.11.0"
+tokenizers = { version = "0.23", default-features = false, features = ["onig", "fancy-regex"] }
+safetensors = "0.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+axum = "0.8"
+tokio = { version = "1.54", features = ["rt-multi-thread", "macros", "net", "signal"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+thiserror = "2"
+anyhow = "1"
+clap = { version = "4", features = ["derive", "env"] }
+sha2 = "0.10"
+hex = "0.4"
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "charset"] }
+
+[dev-dependencies]
+tokio = { version = "1.54", features = ["full", "test-util"] }

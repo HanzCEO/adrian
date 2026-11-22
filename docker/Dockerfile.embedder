@@ -1,0 +1,95 @@
+# syntax=docker/dockerfile:1.7
+#
+# The uibk-embedding-v1 inference engine.
+#
+# The weights are baked in at build time so that the running container needs no network
+# access at all. They are downloaded from a pinned model revision and every file is
+# checked against `embedder/weights/SHA256SUMS` before the build is allowed to continue:
+# a silently truncated safetensors file would otherwise produce plausible-looking garbage
+# embeddings rather than an error.
+
+ARG MODEL_REPO=DataScience-UIBK/uibk-embedding-v1
+ARG MODEL_REVISION=b18df82e77306006a1dd0162199f6dfeacb5492e
+
+# ---------------------------------------------------------------------------
+# Stage 1: fetch and verify the model files
+# ---------------------------------------------------------------------------
+FROM debian:bookworm-slim AS weights
+
+ARG MODEL_REPO
+ARG MODEL_REVISION
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates curl \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /models
+
+COPY embedder/weights/SHA256SUMS /models/SHA256SUMS
+
+# The eight files the engine needs. `1_HybridTokens/model.safetensors` contains the
+# rotation matrices, which is why the Rust side never has to reproduce a QR decomposition.
+RUN set -eux; \
+    base="https://huggingface.co/${MODEL_REPO}/resolve/${MODEL_REVISION}"; \
+    for file in \
+        model.safetensors \
+        dense_branch.safetensors \
+        1_HybridTokens/model.safetensors \
+        tokenizer.json \
+        tokenizer_config.json \
+        config.json \
+        config_sentence_transformers.json \
+        sentence_bert_config.json; do \
+        mkdir -p "$(dirname "$file")"; \
+        curl -fsSL --retry 5 --retry-delay 3 -o "$file" "$base/$file"; \
+    done; \
+    sha256sum -c /models/SHA256SUMS
+
+# ---------------------------------------------------------------------------
+# Stage 2: build the engine
+# ---------------------------------------------------------------------------
+FROM rust:1.93-slim AS builder
+
+WORKDIR /build
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends pkg-config libssl-dev cmake build-essential \
+ && rm -rf /var/lib/apt/lists/*
+
+COPY embedder/Cargo.toml embedder/Cargo.lock ./
+RUN mkdir -p src \
+ && echo 'fn main() {}' > src/main.rs \
+ && cargo build --release \
+ && rm -rf src
+
+COPY embedder/src ./src
+COPY embedder/tests ./tests
+RUN touch src/main.rs && cargo build --release
+
+# ---------------------------------------------------------------------------
+# Stage 3: runtime
+# ---------------------------------------------------------------------------
+FROM debian:bookworm-slim AS runtime
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates tini \
+ && rm -rf /var/lib/apt/lists/* \
+ && groupadd --gid 10001 embedder \
+ && useradd --uid 10001 --gid 10001 --create-home embedder
+
+COPY --from=builder /build/target/release/adrian-embedder /usr/local/bin/adrian-embedder
+COPY --from=weights /models /models
+
+ENV ADRIAN_WEIGHTS_DIR=/models \
+    EMBEDDER_BIND=0.0.0.0:8081 \
+    RUST_LOG=info
+
+USER embedder:embedder
+WORKDIR /home/embedder
+EXPOSE 8081
+
+HEALTHCHECK --interval=10s --timeout=5s --start-period=60s --retries=20 \
+    CMD ["/usr/local/bin/adrian-embedder", "healthcheck"]
+
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/adrian-embedder"]
+CMD ["serve"]
