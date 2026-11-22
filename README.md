@@ -101,6 +101,14 @@ The tools are `adr_search`, `adr_get`, `adr_list`, `adr_submit`, `adr_similar`,
 | `ADRIAN_EMBED_MODEL` | `uibk-embedding-v1` | Model the engine must be serving. |
 | `ADRIAN_EMBED_VERSION` | `1` | Model version the engine must be serving. |
 
+The embedding engine container reads its own three:
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `EMBEDDER_BIND` | `0.0.0.0:8081` | Address the engine binds to. Never published. |
+| `ADRIAN_WEIGHTS_DIR` | `/models` in the image | Directory holding the model files and `SHA256SUMS`. |
+| `RUST_LOG` | `info` | `tracing` filter for the engine. |
+
 ## What v0.1.0 does not do
 
 Stated plainly, because a database that quietly implies more than it delivers is worse
