@@ -31,3 +31,6 @@ scripts/oracle/model/
 scripts/oracle/.venv/
 scripts/oracle/__pycache__/
 scripts/oracle/probe*.py
+
+# pi agent scratch state: goal tracking, audit logs. Machine-local, never shared.
+.pi/
