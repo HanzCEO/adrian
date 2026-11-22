@@ -6,6 +6,7 @@
 pub mod auth;
 pub mod dto;
 pub mod error;
+pub mod json;
 pub mod mcp;
 pub mod rest;
 pub mod state;

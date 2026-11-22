@@ -1,0 +1,134 @@
+//! A JSON body extractor that fails in the documented shape.
+//!
+//! `axum::Json` answers a bad request with its own plain-text rejection body, which would
+//! mean a client that only knows how to parse `{"error": {"code", "message"}}` cannot read
+//! the reason. Every rejection it can produce is therefore mapped onto [`ApiError`]:
+//!
+//! | Cause | Status | `code` |
+//! | --- | --- | --- |
+//! | body is not valid JSON | 400 | `invalid_request` |
+//! | body is valid JSON but the wrong shape, or a required field is missing | 400 | `invalid_request` |
+//! | `Content-Type` is not `application/json` | 415 | `unsupported_media_type` |
+//! | body exceeds the configured limit | 413 | `payload_too_large` |
+//!
+//! A missing required field is reported as 400 rather than 422 on purpose: the contract
+//! documents 400/401/404/409/413/415/500/502 and nothing else, so a 422 would be a status a
+//! client has no rule for.
+
+use crate::error::ApiError;
+use axum::extract::rejection::JsonRejection;
+use axum::extract::{FromRequest, Request};
+use axum::Json;
+use serde::de::DeserializeOwned;
+
+/// A JSON body extractor whose failures are rendered as [`ApiError`].
+pub struct ApiJson<T>(pub T);
+
+impl<T, S> FromRequest<S> for ApiJson<T>
+where
+    T: DeserializeOwned,
+    S: Send + Sync,
+{
+    type Rejection = ApiError;
+
+    async fn from_request(request: Request, state: &S) -> Result<Self, Self::Rejection> {
+        match Json::<T>::from_request(request, state).await {
+            Ok(Json(value)) => Ok(ApiJson(value)),
+            Err(rejection) => Err(map_rejection(rejection)),
+        }
+    }
+}
+
+fn map_rejection(rejection: JsonRejection) -> ApiError {
+    match rejection {
+        JsonRejection::JsonDataError(err) => ApiError::invalid(format!(
+            "the request body does not match the expected shape: {err}"
+        )),
+        JsonRejection::JsonSyntaxError(err) => {
+            ApiError::invalid(format!("the request body is not valid JSON: {err}"))
+        }
+        JsonRejection::MissingJsonContentType(_) => ApiError::unsupported_media_type(
+            "the request must be sent with Content-Type: application/json".to_string(),
+        ),
+        JsonRejection::BytesRejection(err) => {
+            // The only way `Json` fails while reading bytes is a body that is too large.
+            ApiError::payload_too_large(format!("the request body was rejected: {err}"))
+        }
+        other => ApiError::invalid(other.body_text()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::Body;
+    use axum::http::{header, StatusCode};
+    use serde::Deserialize;
+
+    #[derive(Debug, Deserialize)]
+    struct Payload {
+        #[allow(dead_code)]
+        name: String,
+    }
+
+    async fn extract(
+        body: &'static str,
+        content_type: Option<&'static str>,
+    ) -> Result<Payload, ApiError> {
+        let mut builder = Request::builder().method("POST").uri("/");
+        if let Some(content_type) = content_type {
+            builder = builder.header(header::CONTENT_TYPE, content_type);
+        }
+        let request = builder.body(Body::from(body)).expect("request");
+        ApiJson::<Payload>::from_request(request, &())
+            .await
+            .map(|ApiJson(payload)| payload)
+    }
+
+    #[tokio::test]
+    async fn a_valid_body_is_accepted() {
+        let payload = extract(r#"{"name":"ok"}"#, Some("application/json"))
+            .await
+            .expect("valid");
+        assert_eq!(payload.name, "ok");
+    }
+
+    #[tokio::test]
+    async fn malformed_json_is_a_400_in_the_documented_shape() {
+        let err = extract("{not json", Some("application/json"))
+            .await
+            .expect_err("must reject");
+        assert_eq!(err.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(err.code(), "invalid_request");
+    }
+
+    #[tokio::test]
+    async fn a_missing_field_is_a_400_not_a_422() {
+        let err = extract(r#"{"other":1}"#, Some("application/json"))
+            .await
+            .expect_err("must reject");
+        assert_eq!(
+            err.status(),
+            StatusCode::BAD_REQUEST,
+            "a missing field must not surface as 422, which the contract does not document"
+        );
+        assert_eq!(err.code(), "invalid_request");
+    }
+
+    #[tokio::test]
+    async fn a_wrong_content_type_is_a_415() {
+        let err = extract(r#"{"name":"ok"}"#, Some("text/plain"))
+            .await
+            .expect_err("must reject");
+        assert_eq!(err.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
+        assert_eq!(err.code(), "unsupported_media_type");
+    }
+
+    #[tokio::test]
+    async fn a_missing_content_type_is_a_415() {
+        let err = extract(r#"{"name":"ok"}"#, None)
+            .await
+            .expect_err("must reject");
+        assert_eq!(err.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    }
+}

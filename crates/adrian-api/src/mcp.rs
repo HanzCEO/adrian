@@ -25,8 +25,27 @@ use uuid::Uuid;
 const PROTOCOL_VERSION: &str = "2025-06-18";
 
 /// Handle one HTTP request to `/mcp`.
-pub async fn handle(State(state): State<AppState>, body: String) -> Response {
-    let parsed: Value = match serde_json::from_str(&body) {
+///
+/// The body is taken as bytes rather than `String` so that a non-UTF-8 body still gets a
+/// JSON-RPC parse error. `String` as an extractor would reject it with a plain-text 400,
+/// and this endpoint answers in JSON-RPC or not at all.
+pub async fn handle(State(state): State<AppState>, body: axum::body::Bytes) -> Response {
+    let body = match std::str::from_utf8(&body) {
+        Ok(body) => body,
+        Err(err) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "jsonrpc": "2.0",
+                    "id": Value::Null,
+                    "error": { "code": -32700, "message": format!("parse error: body is not UTF-8: {err}") }
+                })),
+            )
+                .into_response();
+        }
+    };
+
+    let parsed: Value = match serde_json::from_str(body) {
         Ok(value) => value,
         Err(err) => {
             return (

@@ -264,6 +264,38 @@ impl Harness {
         (status, bytes)
     }
 
+    /// Send a raw body with an explicit content type, for testing extractor rejections.
+    pub async fn send_typed(
+        &self,
+        method: &str,
+        uri: &str,
+        body: String,
+        content_type: &str,
+    ) -> (StatusCode, Value) {
+        let request = Request::builder()
+            .method(method)
+            .uri(uri)
+            .header("content-type", content_type)
+            .body(Body::from(body))
+            .expect("request");
+        let response = self
+            .router
+            .clone()
+            .oneshot(request)
+            .await
+            .expect("response");
+        let status = response.status();
+        let bytes = response
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes()
+            .to_vec();
+        let value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+        (status, value)
+    }
+
     /// Send a request with extra headers, for tests that care about them.
     pub async fn send_with_headers(
         &self,

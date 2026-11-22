@@ -26,6 +26,14 @@ pub enum ApiError {
     #[error("{message}")]
     Conflict { message: String },
 
+    /// The request body was sent with a content type this endpoint cannot read.
+    #[error("{message}")]
+    UnsupportedMediaType { message: String },
+
+    /// The request body exceeded the configured limit.
+    #[error("{message}")]
+    PayloadTooLarge { message: String },
+
     /// A dependency (embedder, Qdrant) failed or is unreachable.
     #[error("{message}")]
     Upstream { message: String },
@@ -73,6 +81,18 @@ impl ApiError {
         }
     }
 
+    pub fn unsupported_media_type(message: impl Into<String>) -> Self {
+        ApiError::UnsupportedMediaType {
+            message: message.into(),
+        }
+    }
+
+    pub fn payload_too_large(message: impl Into<String>) -> Self {
+        ApiError::PayloadTooLarge {
+            message: message.into(),
+        }
+    }
+
     pub fn unauthorized(message: impl Into<String>) -> Self {
         ApiError::Unauthorized {
             message: message.into(),
@@ -91,6 +111,8 @@ impl ApiError {
             ApiError::InvalidRequest { .. } => "invalid_request",
             ApiError::NotFound { .. } => "not_found",
             ApiError::Conflict { .. } => "conflict",
+            ApiError::UnsupportedMediaType { .. } => "unsupported_media_type",
+            ApiError::PayloadTooLarge { .. } => "payload_too_large",
             ApiError::Upstream { .. } => "upstream_error",
             ApiError::Unauthorized { .. } => "unauthorized",
             ApiError::Internal { .. } => "internal",
@@ -102,6 +124,8 @@ impl ApiError {
             ApiError::InvalidRequest { .. } => StatusCode::BAD_REQUEST,
             ApiError::NotFound { .. } => StatusCode::NOT_FOUND,
             ApiError::Conflict { .. } => StatusCode::CONFLICT,
+            ApiError::UnsupportedMediaType { .. } => StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            ApiError::PayloadTooLarge { .. } => StatusCode::PAYLOAD_TOO_LARGE,
             ApiError::Upstream { .. } => StatusCode::BAD_GATEWAY,
             ApiError::Unauthorized { .. } => StatusCode::UNAUTHORIZED,
             ApiError::Internal { .. } => StatusCode::INTERNAL_SERVER_ERROR,

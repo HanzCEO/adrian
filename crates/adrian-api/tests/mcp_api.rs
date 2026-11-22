@@ -2,8 +2,11 @@
 
 mod common;
 
+use axum::body::Body;
+use axum::http::Request;
 use common::{Harness, SAMPLE_ADR};
 use serde_json::{json, Value};
+use tower::ServiceExt;
 
 async fn call(harness: &Harness, name: &str, arguments: Value) -> Value {
     let (status, body) = harness
@@ -59,6 +62,32 @@ async fn tools_list_advertises_all_seven_tools() {
         assert!(tool["description"].as_str().is_some_and(|d| !d.is_empty()));
         assert!(tool["inputSchema"].is_object());
     }
+}
+
+#[tokio::test]
+async fn a_non_utf8_body_is_a_jsonrpc_parse_error() {
+    let harness = Harness::new(None).await;
+    // `String` as an extractor would reject this with a plain-text 400 before the handler
+    // ran, which would break the promise that /mcp answers only in JSON-RPC.
+    let request = Request::builder()
+        .method("POST")
+        .uri("/mcp")
+        .header("content-type", "application/json")
+        .body(Body::from(vec![0xff, 0xfe, 0x00]))
+        .expect("request");
+    let response = harness
+        .router
+        .clone()
+        .oneshot(request)
+        .await
+        .expect("response");
+    assert_eq!(response.status(), 400);
+    let bytes = axum::body::to_bytes(response.into_body(), 1 << 20)
+        .await
+        .expect("body");
+    let body: Value = serde_json::from_slice(&bytes).expect("JSON, not plain text");
+    assert_eq!(body["jsonrpc"], "2.0");
+    assert_eq!(body["error"]["code"], -32700);
 }
 
 #[tokio::test]

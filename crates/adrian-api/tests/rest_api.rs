@@ -64,10 +64,10 @@ async fn an_unknown_transition_target_is_a_400() {
 }
 
 #[tokio::test]
-async fn an_oversized_body_is_a_413() {
+async fn an_oversized_body_is_a_413_in_the_documented_shape() {
     let harness = Harness::with_body_limit(None, 512).await;
     let big = "x".repeat(4096);
-    let (status, _) = harness
+    let (status, body) = harness
         .send(
             "POST",
             "/v1/projects",
@@ -76,6 +76,83 @@ async fn an_oversized_body_is_a_413() {
         )
         .await;
     assert_eq!(status, 413);
+    assert_eq!(body["error"]["code"], "payload_too_large");
+    assert!(body["error"]["message"].is_string());
+}
+
+/// Every failure the HTTP layer can produce must use the documented body, including the
+/// ones axum's own extractors raise before a handler ever runs. A client that only knows
+/// `{"error": {"code", "message"}}` must never be handed a plain-text rejection.
+#[tokio::test]
+async fn extractor_failures_use_the_documented_error_shape() {
+    let harness = Harness::new(None).await;
+
+    // Malformed JSON: the body cannot be parsed at all.
+    let (status, body) = harness
+        .send_typed(
+            "POST",
+            "/v1/projects",
+            "{ this is not json".to_string(),
+            "application/json",
+        )
+        .await;
+    assert_eq!(status, 400);
+    assert_eq!(body["error"]["code"], "invalid_request");
+    assert!(body["error"]["message"].is_string());
+
+    // Valid JSON, wrong shape: a required field is missing.
+    let (status, body) = harness
+        .send_typed(
+            "POST",
+            "/v1/projects",
+            json!({ "name": "no slug here" }).to_string(),
+            "application/json",
+        )
+        .await;
+    assert_eq!(
+        status, 400,
+        "a missing field must be 400, not an undocumented 422"
+    );
+    assert_eq!(body["error"]["code"], "invalid_request");
+
+    // Wrong content type.
+    let (status, body) = harness
+        .send_typed(
+            "POST",
+            "/v1/projects",
+            json!({ "slug": "demo", "name": "Demo" }).to_string(),
+            "text/plain",
+        )
+        .await;
+    assert_eq!(status, 415);
+    assert_eq!(body["error"]["code"], "unsupported_media_type");
+
+    // A wrong type in an otherwise well-formed body.
+    let (status, body) = harness
+        .send_typed(
+            "POST",
+            "/v1/projects",
+            json!({ "slug": 7, "name": "Demo" }).to_string(),
+            "application/json",
+        )
+        .await;
+    assert_eq!(status, 400);
+    assert_eq!(body["error"]["code"], "invalid_request");
+
+    // And every one of them carried JSON, not text/plain.
+    let (status, body) = harness
+        .send_typed(
+            "POST",
+            "/v1/projects",
+            "nonsense".to_string(),
+            "application/json",
+        )
+        .await;
+    assert_eq!(status, 400);
+    assert!(
+        body.get("error").is_some(),
+        "an extractor failure must still be a JSON error object, got {body}"
+    );
 }
 
 #[tokio::test]

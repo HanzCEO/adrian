@@ -20,14 +20,30 @@ Every failure returns the same shape:
 
 | `code` | Status | Meaning |
 | --- | --- | --- |
-| `invalid_request` | 400 | Structurally fine, semantically wrong. |
+| `invalid_request` | 400 | Malformed JSON, a missing or wrongly typed field, or a semantically wrong value. |
 | `unauthorized` | 401 | Missing or wrong bearer token. |
 | `not_found` | 404 | The addressed thing does not exist. |
 | `conflict` | 409 | Collides with existing state, or an idempotency key reused with a different body. |
-| `upstream_error` | 502 | The embedder or Qdrant failed. |
+| `payload_too_large` | 413 | The body exceeded `ADRIAN_MAX_BODY_BYTES`. |
+| `unsupported_media_type` | 415 | The request was not sent as `application/json`. |
 | `internal` | 500 | Anything else. The message is still returned. |
+| `upstream_error` | 502 | The embedder or Qdrant failed. |
 
-A body larger than `ADRIAN_MAX_BODY_BYTES` is rejected with 413 before a handler runs.
+There are no other statuses. A missing required field is a 400 rather than a 422, and a body
+that cannot be read is a 413 or a 415, so a client only has to handle the codes above.
+
+The rejection cases are worth spelling out because they happen before a handler runs, in
+axum's own extractors. They are mapped onto the same shape rather than axum's plain-text
+default, so a client that parses `{"error": {"code", "message"}}` can read every failure:
+
+| Request | Status | `code` |
+| --- | --- | --- |
+| `{ not json` | 400 | `invalid_request` |
+| `{"name": "x"}` with `slug` missing | 400 | `invalid_request` |
+| `{"slug": 7}` | 400 | `invalid_request` |
+| `Content-Type: text/plain` | 415 | `unsupported_media_type` |
+| no `Content-Type` | 415 | `unsupported_media_type` |
+| body over `ADRIAN_MAX_BODY_BYTES` | 413 | `payload_too_large` |
 
 ---
 

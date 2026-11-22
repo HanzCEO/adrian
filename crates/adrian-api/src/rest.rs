@@ -5,6 +5,7 @@
 
 use crate::dto::*;
 use crate::error::{ApiError, ApiResult};
+use crate::json::ApiJson;
 use crate::state::AppState;
 use adrian_core::chunker::WhitespaceTokenCounter;
 use adrian_core::export::{self, ExportFormat};
@@ -103,7 +104,7 @@ pub async fn models(State(state): State<AppState>) -> ApiResult<Json<ModelsRespo
 
 pub async fn create_project(
     State(state): State<AppState>,
-    Json(request): Json<CreateProjectRequest>,
+    ApiJson(request): ApiJson<CreateProjectRequest>,
 ) -> ApiResult<(StatusCode, Json<ProjectResponse>)> {
     let slug = request.slug.trim();
     if slug.is_empty() {
@@ -166,7 +167,7 @@ pub async fn list_projects(State(state): State<AppState>) -> ApiResult<Json<Vec<
 pub async fn create_adr(
     State(state): State<AppState>,
     headers: axum::http::HeaderMap,
-    Json(request): Json<CreateAdrRequest>,
+    ApiJson(request): ApiJson<CreateAdrRequest>,
 ) -> ApiResult<(StatusCode, Json<IngestResponse>)> {
     if request.source.trim().is_empty() {
         return Err(ApiError::invalid("`source` must not be empty"));
@@ -473,7 +474,7 @@ pub async fn get_adr_chunks(
 pub async fn transition(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    Json(request): Json<TransitionRequest>,
+    ApiJson(request): ApiJson<TransitionRequest>,
 ) -> ApiResult<Json<TransitionResponse>> {
     let adr_id = parse_uuid(&id)?;
     // Parsing the target status against the closed vocabulary is what makes an invalid
@@ -498,7 +499,7 @@ pub async fn transition(
 
 pub async fn search(
     State(state): State<AppState>,
-    Json(request): Json<SearchRequest>,
+    ApiJson(request): ApiJson<SearchRequest>,
 ) -> ApiResult<Json<SearchResponse>> {
     if request.query.trim().is_empty() {
         return Err(ApiError::invalid("`query` must not be empty"));
@@ -733,7 +734,7 @@ pub async fn context(
 
 pub async fn export_decisions(
     State(state): State<AppState>,
-    Json(request): Json<ExportRequest>,
+    ApiJson(request): ApiJson<ExportRequest>,
 ) -> ApiResult<axum::response::Response> {
     let project = state
         .store
