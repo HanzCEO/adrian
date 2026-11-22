@@ -13,6 +13,7 @@ dependencies = [
  "candle-transformers",
  "clap",
  "hex",
+ "http-body-util",
  "reqwest",
  "safetensors 0.8.0",
  "serde",
@@ -21,6 +22,7 @@ dependencies = [
  "thiserror 2.0.21",
  "tokenizers 0.23.2",
  "tokio",
+ "tower",
  "tracing",
  "tracing-subscriber",
 ]

@@ -25,6 +25,7 @@ FILES=(
   model.safetensors
   dense_branch.safetensors
   1_HybridTokens/model.safetensors
+  1_HybridTokens/config.json
   tokenizer.json
   tokenizer_config.json
   config.json

@@ -16,10 +16,12 @@ path = "src/main.rs"
 
 [features]
 default = []
-cuda = ["candle-core/cuda", "candle-nn/cuda", "candle-transformers/cuda"]
+cuda = ["candle/cuda", "candle-nn/cuda", "candle-transformers/cuda"]
 
 [dependencies]
-candle-core = "=0.11.0"
+# candle-core is imported as `candle` because that is the name the vendored sources and
+# the candle ecosystem use for the core crate.
+candle = { package = "candle-core", version = "=0.11.0" }
 candle-nn = "=0.11.0"
 candle-transformers = "=0.11.0"
 tokenizers = { version = "0.23", default-features = false, features = ["onig", "fancy-regex"] }
@@ -39,3 +41,5 @@ reqwest = { version = "0.13", default-features = false, features = ["rustls", "c
 
 [dev-dependencies]
 tokio = { version = "1.54", features = ["full", "test-util"] }
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"

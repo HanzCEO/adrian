@@ -27,7 +27,7 @@ WORKDIR /models
 
 COPY embedder/weights/SHA256SUMS /models/SHA256SUMS
 
-# The eight files the engine needs. `1_HybridTokens/model.safetensors` contains the
+# The files the engine needs. `1_HybridTokens/model.safetensors` contains the
 # rotation matrices, which is why the Rust side never has to reproduce a QR decomposition.
 RUN set -eux; \
     base="https://huggingface.co/${MODEL_REPO}/resolve/${MODEL_REVISION}"; \
@@ -35,6 +35,7 @@ RUN set -eux; \
         model.safetensors \
         dense_branch.safetensors \
         1_HybridTokens/model.safetensors \
+        1_HybridTokens/config.json \
         tokenizer.json \
         tokenizer_config.json \
         config.json \
