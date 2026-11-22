@@ -15,7 +15,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
 COMPOSE=(docker compose -f docker/docker-compose.yml)
-PORT="${ADRIAN_PORT:-8080}"
+PORT="${ADRIAN_PORT:-38922}"
 BASE="http://127.0.0.1:${PORT}"
 KEEP=false
 for arg in "$@"; do

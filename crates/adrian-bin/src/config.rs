@@ -53,7 +53,7 @@ impl std::error::Error for ConfigError {}
 impl Config {
     /// Build a configuration from the process environment.
     pub fn from_env() -> Result<Config, ConfigError> {
-        let bind = env_or("ADRIAN_BIND", "0.0.0.0:8080");
+        let bind = env_or("ADRIAN_BIND", "0.0.0.0:38922");
         let db_path = env_or("ADRIAN_DB_PATH", "/data/adrian.db");
         let qdrant_url = trim_trailing_slash(env_or("ADRIAN_QDRANT_URL", "http://127.0.0.1:6333"));
         let embedder_url =
@@ -180,7 +180,7 @@ mod tests {
     #[test]
     fn mcp_token_falls_back_to_the_api_token() {
         let mut config = Config {
-            bind: "0.0.0.0:8080".into(),
+            bind: "0.0.0.0:38922".into(),
             db_path: ":memory:".into(),
             qdrant_url: "http://127.0.0.1:6333".into(),
             embedder_url: "http://127.0.0.1:8081".into(),

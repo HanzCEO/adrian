@@ -249,7 +249,7 @@ A tool-level failure is `isError: true` inside a successful response, which is t
 convention; only protocol problems become JSON-RPC errors.
 
 ```bash
-curl -s localhost:8080/mcp -H 'content-type: application/json' -d '{
+curl -s localhost:38922/mcp -H 'content-type: application/json' -d '{
   "jsonrpc": "2.0", "id": 1, "method": "tools/call",
   "params": { "name": "adr_search", "arguments": { "query": "async runtime" } }
 }'
@@ -282,7 +282,7 @@ For agents that spawn a process rather than speaking HTTP:
 
 ```json
 { "mcpServers": { "adrian": {
-    "command": "adrian", "args": ["mcp-stdio", "--url", "http://127.0.0.1:8080"] } } }
+    "command": "adrian", "args": ["mcp-stdio", "--url", "http://127.0.0.1:38922"] } } }
 ```
 
 Newline-delimited JSON-RPC on stdin, responses on stdout, diagnostics on stderr. One response

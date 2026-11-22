@@ -20,7 +20,7 @@ enum Command {
     /// Proxy newline-delimited JSON-RPC from stdin to a running daemon.
     McpStdio {
         /// Base URL of the daemon.
-        #[arg(long, env = "ADRIAN_URL", default_value = "http://127.0.0.1:8080")]
+        #[arg(long, env = "ADRIAN_URL", default_value = "http://127.0.0.1:38922")]
         url: String,
         /// Bearer token to send, if the daemon requires one.
         #[arg(long, env = "ADRIAN_API_TOKEN")]

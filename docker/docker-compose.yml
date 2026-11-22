@@ -65,11 +65,11 @@ services:
     networks:
       - adrian
     ports:
-      - "${ADRIAN_PORT:-8080}:8080"
+      - "${ADRIAN_PORT:-38922}:38922"
     volumes:
       - adrian_data:/data
     environment:
-      ADRIAN_BIND: "0.0.0.0:8080"
+      ADRIAN_BIND: "0.0.0.0:38922"
       ADRIAN_DB_PATH: "/data/adrian.db"
       ADRIAN_QDRANT_URL: "http://qdrant:6333"
       ADRIAN_EMBEDDER_URL: "http://embedder:8081"
@@ -84,7 +84,7 @@ services:
       embedder:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/healthz"]
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:38922/healthz"]
       interval: 10s
       timeout: 5s
       retries: 20

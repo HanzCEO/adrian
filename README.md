@@ -9,7 +9,7 @@ and get an answer with citations.
 
 ```
                  ┌──────────────────────────────────────────┐
-   :8080  ──────▶│  adrian                                  │
+   :38922 ──────▶│  adrian                                  │
                  │  REST + MCP on one port, SQLite inside   │
                  └───────┬───────────────────────┬──────────┘
                          │                       │
@@ -39,18 +39,18 @@ Then:
 
 ```bash
 # create a project
-curl -s localhost:8080/v1/projects \
+curl -s localhost:38922/v1/projects \
   -H 'content-type: application/json' \
   -d '{"slug":"demo","name":"Demo"}' | jq
 
 # ingest an ADR
-curl -s localhost:8080/v1/adrs \
+curl -s localhost:38922/v1/adrs \
   -H 'content-type: application/json' \
   -d "$(jq -Rn --rawfile s docs/adr/0001-use-tokio.md \
         '{project:"demo", external_ref:"docs/adr/0001-use-tokio.md", source:$s, actor:"human:me"}')" | jq
 
 # search
-curl -s localhost:8080/v1/search \
+curl -s localhost:38922/v1/search \
   -H 'content-type: application/json' \
   -d '{"query":"which async runtime did we pick and why","project":"demo"}' | jq
 ```
@@ -64,7 +64,7 @@ Streamable HTTP, on the port the daemon already exposes:
 ```json
 {
   "mcpServers": {
-    "adrian": { "type": "http", "url": "http://127.0.0.1:8080/mcp" }
+    "adrian": { "type": "http", "url": "http://127.0.0.1:38922/mcp" }
   }
 }
 ```
@@ -76,7 +76,7 @@ stdio, for agents that insist on spawning a process:
   "mcpServers": {
     "adrian": {
       "command": "adrian",
-      "args": ["mcp-stdio", "--url", "http://127.0.0.1:8080"]
+      "args": ["mcp-stdio", "--url", "http://127.0.0.1:38922"]
     }
   }
 }
@@ -89,8 +89,8 @@ The tools are `adr_search`, `adr_get`, `adr_list`, `adr_submit`, `adr_similar`,
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `ADRIAN_BIND` | `0.0.0.0:8080` | Address the HTTP server binds to. |
-| `ADRIAN_PORT` | `8080` | Host port published by compose. |
+| `ADRIAN_BIND` | `0.0.0.0:38922` | Address the HTTP server binds to. |
+| `ADRIAN_PORT` | `38922` | Host port published by compose. |
 | `ADRIAN_DB_PATH` | `/data/adrian.db` | SQLite file. |
 | `ADRIAN_QDRANT_URL` | `http://127.0.0.1:6333` | Qdrant base URL. Compose overrides it with the container address. |
 | `ADRIAN_EMBEDDER_URL` | `http://127.0.0.1:8081` | Embedding engine base URL. Compose overrides it with the container address. |

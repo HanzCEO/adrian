@@ -43,7 +43,7 @@ RUN apt-get update \
 
 COPY --from=builder /build/target/release/adrian /usr/local/bin/adrian
 
-ENV ADRIAN_BIND=0.0.0.0:8080 \
+ENV ADRIAN_BIND=0.0.0.0:38922 \
     ADRIAN_DB_PATH=/data/adrian.db \
     ADRIAN_QDRANT_URL=http://qdrant:6333 \
     ADRIAN_EMBEDDER_URL=http://embedder:8081 \
@@ -54,7 +54,7 @@ ENV ADRIAN_BIND=0.0.0.0:8080 \
 USER adrian:adrian
 WORKDIR /home/adrian
 VOLUME ["/data"]
-EXPOSE 8080
+EXPOSE 38922
 
 ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/adrian"]
 CMD ["serve"]
