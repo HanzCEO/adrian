@@ -49,7 +49,10 @@ RUN set -eux; \
 # ---------------------------------------------------------------------------
 # Stage 2: build the engine
 # ---------------------------------------------------------------------------
-FROM rust:1.93-slim AS builder
+# Pinned to bookworm so the builder's glibc matches the runtime's. Building on the default
+# (trixie) tag and running on bookworm produces a binary that fails at exec time with a
+# GLIBC version error, which is a slow way to find out.
+FROM rust:1.93-slim-bookworm AS builder
 
 WORKDIR /build
 

@@ -3,7 +3,8 @@
 # The Adrian daemon: REST plus MCP on one port, with the background embed worker.
 # Qdrant and the embedding engine are separate containers on the same internal network.
 
-FROM rust:1.93-slim AS builder
+# Pinned to bookworm so the builder's glibc matches the runtime's.
+FROM rust:1.93-slim-bookworm AS builder
 
 WORKDIR /build
 
