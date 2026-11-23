@@ -97,7 +97,7 @@ the daemon first so the embed worker cannot race the deletion.
 
 ## Connecting a coding agent
 
-Two forms, both backed by the same twelve tools.
+Two forms, both backed by the same thirteen tools.
 
 Streamable HTTP, on the port the daemon already exposes:
 
@@ -123,10 +123,10 @@ stdio, for agents that insist on spawning a process:
 ```
 
 The tools are `project_list`, `project_create`, `project_delete`, `adr_search`, `adr_get`,
-`adr_list`, `adr_submit`, `adr_import`, `adr_delete`, `adr_similar`, `adr_transition` and
-`adr_context_for`. Two documents are served over MCP resources, `adrian://docs/api` and
-`adrian://docs/madr`, so an agent can read the contract without a checkout. See
-[docs/API.md](docs/API.md).
+`adr_list`, `adr_submit`, `adr_import`, `adr_preview`, `adr_delete`, `adr_similar`,
+`adr_transition` and `adr_context_for`. Two documents are served over MCP resources,
+`adrian://docs/api` and `adrian://docs/madr`, so an agent can read the contract without a
+checkout. See [docs/API.md](docs/API.md).
 
 ## Environment
 

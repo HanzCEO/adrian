@@ -1,4 +1,4 @@
-//! The MCP surface: protocol behaviour, the twelve tools and the contract documents.
+//! The MCP surface: protocol behaviour, the thirteen tools and the contract documents.
 
 mod common;
 
@@ -57,14 +57,14 @@ async fn notifications_get_no_body() {
 }
 
 #[tokio::test]
-async fn tools_list_advertises_all_twelve_tools() {
+async fn tools_list_advertises_all_thirteen_tools() {
     let harness = Harness::new(None).await;
     let (status, body) = harness
         .mcp(json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list" }))
         .await;
     assert_eq!(status, 200);
     let tools = body["result"]["tools"].as_array().expect("tools");
-    assert_eq!(tools.len(), 12);
+    assert_eq!(tools.len(), 13);
     let names: Vec<&str> = tools
         .iter()
         .filter_map(|tool| tool["name"].as_str())
@@ -74,6 +74,7 @@ async fn tools_list_advertises_all_twelve_tools() {
         "project_create",
         "project_delete",
         "adr_import",
+        "adr_preview",
         "adr_delete",
     ] {
         assert!(
@@ -818,6 +819,120 @@ We decided.
             .any(|warning| warning["kind"] == "status_bullet_ignored"),
         "the ignored bullet must be visible, got {warnings:?}"
     );
+}
+
+#[tokio::test]
+async fn preview_answers_what_an_ingest_would_record_without_writing() {
+    let harness = Harness::new(None).await;
+    harness.create_project("demo").await;
+
+    // The real corpus writes free-text statuses in a bullet. Before preview existed the only
+    // way to learn that `Accepted; ...` is read as accepted was to read the parser source.
+    let bullet = r#"# A decision recorded as a bullet
+
+- **Status:** Accepted; the renewal clause is superseded by ADR-0091
+- **Date:** 2024-03-01
+
+## Context and Problem Statement
+
+Something needed deciding.
+
+## Decision Outcome
+
+We decided.
+"#;
+    let front_matter = r#"---
+status: Accepted; the renewal clause is superseded by ADR-0091
+---
+
+# A decision recorded in front matter
+
+## Context and Problem Statement
+
+Something needed deciding.
+
+## Decision Outcome
+
+We decided.
+"#;
+
+    let response = call(
+        &harness,
+        "adr_preview",
+        json!({
+            "documents": [
+                { "external_ref": "docs/adr/0007-bullet.md", "source": bullet },
+                { "external_ref": "docs/adr/0007-front-matter.md", "source": front_matter },
+            ]
+        }),
+    )
+    .await;
+    assert_eq!(response["result"]["isError"], false, "{response}");
+    let payload = tool_text(&response);
+
+    let results = payload["results"].as_array().expect("results");
+    let bullet = &results[0];
+    assert_eq!(bullet["number"], 7);
+    assert_eq!(bullet["status_from"], "none");
+    assert_eq!(bullet["status_recorded"], "proposed");
+    assert!(
+        bullet["warnings"]
+            .as_array()
+            .expect("warnings")
+            .iter()
+            .any(|warning| warning["kind"] == "status_bullet_ignored"),
+        "the ignored bullet must be named, got {bullet}"
+    );
+
+    let front = &results[1];
+    assert_eq!(front["status_from"], "front_matter");
+    assert_eq!(front["status_declared"], "accepted");
+    assert_eq!(
+        front["status_recorded"], "proposed",
+        "a plain import forces proposed even when front matter says otherwise"
+    );
+
+    assert_eq!(
+        payload["duplicate_numbers"][0]["number"], 7,
+        "two refs that share a number are worth naming before the import, got {payload}"
+    );
+    assert_eq!(
+        payload["duplicate_numbers"][0]["external_refs"]
+            .as_array()
+            .map(|refs| refs.len()),
+        Some(2)
+    );
+
+    // Nothing was written: the project is still empty.
+    let listed = call(&harness, "adr_list", json!({ "project": "demo" })).await;
+    let decisions = tool_text(&listed)["decisions"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert!(
+        decisions.is_empty(),
+        "preview must not write, got {decisions:?}"
+    );
+}
+
+#[tokio::test]
+async fn preview_honours_preserve_status_because_that_is_what_the_import_would_do() {
+    let harness = Harness::new(None).await;
+    harness.create_project("demo").await;
+
+    let source = "---\nstatus: superseded by ADR-0123\n---\n\n# Already superseded\n\n## Context and Problem Statement\n\nWhy.\n";
+    let response = call(
+        &harness,
+        "adr_preview",
+        json!({
+            "preserve_status": true,
+            "documents": [{ "external_ref": "adr-0042-x.md", "source": source }]
+        }),
+    )
+    .await;
+    let payload = tool_text(&response);
+    assert_eq!(payload["results"][0]["status_declared"], "superseded");
+    assert_eq!(payload["results"][0]["status_recorded"], "superseded");
 }
 
 #[tokio::test]

@@ -136,6 +136,25 @@ Imports are mapped onto it: `open`, `draft`, `pending` and `proposal` become `pr
 `abandoned` becomes `withdrawn`; `superseded by ADR-0123` becomes `superseded`. Anything else
 produces an `UnknownStatus` warning and falls back to `proposed`.
 
+**Only the leading word counts.** The value is lowercased, then cut at the first `|`, `,`,
+`;`, `/` or newline, and the remainder is matched as a prefix. So the free text real corpora
+write behaves like this:
+
+| Written | Read as |
+| --- | --- |
+| `Accepted` | `accepted` |
+| `Accepted; the renewal clause is superseded by ADR-0091` | `accepted` |
+| `Accepted, amended by ADR-0108` | `accepted` |
+| `Accepted (provider superseded by ADR-0101)` | `accepted` |
+| `Superseded by ADR-0037` | `superseded` |
+| `proposed \| accepted` | `proposed` |
+
+That last row is the trap. A document that has been superseded in part reads as `accepted`,
+because the clause after the semicolon is not parsed. The full sentence stays in the source
+and is re-emitted on export, so nothing is lost, but the status is the leading word and only
+the leading word. `adr_preview` reports `status_declared` for any document, which is the
+cheap way to check a corpus instead of reasoning about it.
+
 Status is read from YAML front matter only. Many hand-written corpora put it in a bullet
 under the title instead:
 
@@ -149,7 +168,8 @@ under the title instead:
 That bullet is not front matter and is not read. The decision lands as `proposed` and the
 parser emits a `StatusBulletIgnored` warning naming the value it saw. To keep an existing
 status, move it into front matter or migrate with `preserve_status` so the status is recorded
-as an explicit operator act.
+as an explicit operator act. `adr_preview` shows which of the two a document will do before
+the import runs.
 
 `preserve_status` is also the reason `adr_import` differs from `adr_submit`. A submission
 forces `proposed` because an agent must not accept its own decision. A migration records what

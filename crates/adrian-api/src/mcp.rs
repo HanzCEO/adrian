@@ -2,7 +2,7 @@
 //!
 //! The transport is the streamable-HTTP subset that coding agents actually use: one
 //! JSON-RPC request per POST, a single JSON response, and batch arrays processed in order.
-//! No SSE streaming, because none of the twelve tools produces partial results.
+//! No SSE streaming, because none of the thirteen tools produces partial results.
 //!
 //! Tool failures are reported as `isError: true` inside a successful response, which is the
 //! MCP convention. Only protocol-level problems become JSON-RPC errors.
@@ -18,6 +18,7 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde_json::{json, Value};
+use std::collections::HashMap;
 use std::str::FromStr;
 use uuid::Uuid;
 
@@ -231,17 +232,31 @@ fn tool_result(text: &str, is_error: bool) -> Value {
 /// tools, instead of inferring the document shape from an empty schema and going looking for a
 /// checkout. Every fact here is one that a caller who guessed wrong would not be told about: a
 /// mis-read status and a mis-derived number both land silently.
+///
+/// The last paragraph exists because the first version of this text named the two document URIs
+/// without saying what kind of thing they are, and a caller read them with its filesystem tool
+/// and got ENOENT. Naming the resource mechanism costs one line and saves that round trip.
 const SERVER_INSTRUCTIONS: &str = "\
-Decisions are MADR documents. Read `adrian://docs/madr` before you write or import one; \
-`adrian://docs/api` is the route and tool reference.\n\
+Decisions are MADR documents. Two documents are served as MCP resources, not as files: read \
+`adrian://docs/madr` for what the parser understands and `adrian://docs/api` for the route and \
+tool reference. Use `resources/list` and `resources/read` for them.\n\
 Status comes from YAML front matter only, and only these six values are understood: \
 proposed, accepted, rejected, deprecated, superseded, withdrawn. A `- **Status:** Accepted` \
 bullet under the title is ignored, so the decision lands as proposed and the result carries a \
 status_bullet_ignored warning. Nothing becomes accepted except through adr_transition.\n\
+Free text is matched by its leading word, up to the first `|`, `,`, `;`, `/` or newline. \
+`Accepted; the renewal clause is superseded by ADR-0091` is therefore `accepted`, not \
+`superseded`, and `superseded by ADR-0123` is `superseded`. `approved`, `agreed` and `decided` \
+mean accepted; `open`, `draft`, `pending` and `proposal` mean proposed; `obsolete` means \
+deprecated; `abandoned` means withdrawn. Anything else is an unknown_status warning and lands \
+proposed.\n\
 Recognised front matter keys are status, date, decision-makers (or deciders), consulted and \
 informed. Any other key is preserved verbatim but not interpreted.\n\
 The display number is the leading digits of `external_ref`, so `docs/adr/0042-use-x.md` is 42 \
-and `adr-007.md` has no number. Duplicate numbers are not reconciled; pick distinct refs.";
+and `adr-007.md` has no number. Duplicate numbers are not reconciled; pick distinct refs.\n\
+`adr_preview` parses documents and reports what an ingest would record, without writing. Use it \
+to answer any question about how a corpus will parse. Do not read the server's source to \
+predict it.";
 
 /// The documents this server serves over `resources/read`.
 ///
@@ -279,7 +294,7 @@ fn read_resource(uri: &str) -> Option<&'static str> {
     }
 }
 
-/// The twelve tools, with descriptions written for a model rather than for a human reading
+/// The thirteen tools, with descriptions written for a model rather than for a human reading
 /// a reference page: each one says when to reach for it.
 fn tool_catalogue() -> Vec<Value> {
     vec![
@@ -437,6 +452,47 @@ fn tool_catalogue() -> Vec<Value> {
             }
         }),
         json!({
+            "name": "adr_preview",
+            "description": "Parse documents and report what `adr_submit` or `adr_import` would \
+                            make of them, without writing anything. Call this before an import \
+                            of a corpus you did not author, because it is the only way to see \
+                            the outcome of a guess: it says, per document, the title, the \
+                            status that would be recorded and where that status came from, the \
+                            warnings the parser raised, the sections it found, and the display \
+                            number derived from `external_ref`. It also lists duplicate numbers \
+                            across the batch. Nothing here needs the server's source code; if \
+                            you are about to read the repository to predict how a document \
+                            parses, call this instead.\n\n\
+                            `status_from` is `front_matter` when the document's YAML front \
+                            matter supplied a status, `none` when it supplied none, which is \
+                            what makes an import land `proposed`. A `status_bullet_ignored` \
+                            warning means the document writes its status as a \
+                            `- **Status:** ...` bullet and the value is discarded.\n\n\
+                            `status` is the value the parser read from front matter, before \
+                            `preserve_status` decides whether to honour it. Add \
+                            `preserve_status` to the preview to see the status the import would \
+                            actually record.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "documents": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "external_ref": { "type": "string", "description": "Stable key and the source of the display number, for example `docs/adr/0001-whitelabel.md` gives number 1." },
+                                "source": { "type": "string", "description": "The MADR document as Markdown, including any YAML front matter." }
+                            },
+                            "required": ["external_ref", "source"]
+                        }
+                    },
+                    "preserve_status": { "type": "boolean", "default": false, "description": "Preview the status an import with this flag would record, instead of the `proposed` a plain import forces." }
+                },
+                "required": ["documents"]
+            }
+        }),
+        json!({
             "name": "adr_delete",
             "description": "Delete one decision and everything that belongs to it, including \
                             its vector points. Irreversible; use it to remove a probe or a \
@@ -501,6 +557,7 @@ async fn call_tool(state: &AppState, name: &str, arguments: Value) -> Result<Str
         "adr_list" => tool_list(state, arguments).await,
         "adr_submit" => tool_submit(state, arguments).await,
         "adr_import" => tool_import(state, arguments).await,
+        "adr_preview" => tool_preview(arguments),
         "adr_delete" => tool_delete(state, arguments).await,
         "adr_similar" => tool_similar(state, arguments).await,
         "adr_transition" => tool_transition(state, arguments).await,
@@ -813,6 +870,113 @@ async fn tool_import(state: &AppState, arguments: Value) -> Result<String, Strin
         "revised": revised,
         "unchanged": unchanged,
         "failed": failed,
+        "results": results,
+    })))
+}
+
+/// Parse without writing, so a caller can see the outcome of a guess.
+///
+/// This exists because the alternative, for a corpus whose statuses are free text, was for the
+/// caller to read the parser source to predict what `adr_import` would do. A tool that answers
+/// the question directly is worth more than any amount of description.
+fn tool_preview(arguments: Value) -> Result<String, String> {
+    let preserve_status = arguments
+        .get("preserve_status")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
+
+    let documents = arguments
+        .get("documents")
+        .and_then(|value| value.as_array())
+        .ok_or_else(|| "`documents` must be an array".to_string())?;
+    if documents.is_empty() {
+        return Err("`documents` must not be empty".to_string());
+    }
+
+    let mut results = Vec::with_capacity(documents.len());
+    let mut numbers: HashMap<i64, Vec<String>> = HashMap::new();
+
+    for document in documents {
+        let Some(external_ref) = document.get("external_ref").and_then(|v| v.as_str()) else {
+            results.push(json!({
+                "external_ref": Value::Null,
+                "error": "each document needs a string `external_ref`",
+            }));
+            continue;
+        };
+        let Some(source) = document.get("source").and_then(|v| v.as_str()) else {
+            results.push(json!({
+                "external_ref": external_ref,
+                "error": "each document needs a string `source`",
+            }));
+            continue;
+        };
+
+        let parsed = adrian_core::parser::parse_str(source);
+        let number = adrian_core::ingest::number_from_ref(external_ref);
+        if let Some(number) = number {
+            numbers
+                .entry(number)
+                .or_default()
+                .push(external_ref.to_string());
+        }
+
+        let status_from = if parsed.status_raw.is_some() {
+            "front_matter"
+        } else {
+            "none"
+        };
+        // The status the ingest would record, which is what the caller actually asked about.
+        let recorded = match (&parsed.status, preserve_status) {
+            (Some(status), true) => Some(*status),
+            _ => Some(Status::Proposed),
+        };
+
+        results.push(json!({
+            "external_ref": external_ref,
+            "number": number,
+            "title": parsed.title,
+            "status_from": status_from,
+            "status_declared": parsed.status.map(Status::as_str),
+            "status_recorded": recorded.map(Status::as_str),
+            "sections": parsed.sections.iter().map(|s| s.kind.as_str()).collect::<Vec<_>>(),
+            "options": parsed.items_of(ItemKind::Option).count(),
+            "warnings": parsed.warnings,
+        }));
+    }
+
+    // A number that appears twice is not reconciled by the ingest: both documents land, and
+    // two decisions answer to the same number. Worth naming here rather than after the import.
+    let mut duplicate_numbers: Vec<Value> = numbers
+        .into_iter()
+        .filter(|(_, refs)| refs.len() > 1)
+        .map(|(number, refs)| json!({ "number": number, "external_refs": refs }))
+        .collect();
+    duplicate_numbers.sort_by_key(|value| value["number"].as_i64().unwrap_or_default());
+
+    let recorded_counts = results
+        .iter()
+        .filter_map(|result| result.get("status_recorded").and_then(|v| v.as_str()))
+        .fold(HashMap::new(), |mut counts, status| {
+            *counts.entry(status.to_string()).or_insert(0usize) += 1;
+            counts
+        });
+    let with_warnings = results
+        .iter()
+        .filter(|result| {
+            result
+                .get("warnings")
+                .and_then(|v| v.as_array())
+                .is_some_and(|warnings| !warnings.is_empty())
+        })
+        .count();
+
+    Ok(render(&json!({
+        "documents": results.len(),
+        "preserve_status": preserve_status,
+        "status_recorded": recorded_counts,
+        "with_warnings": with_warnings,
+        "duplicate_numbers": duplicate_numbers,
         "results": results,
     })))
 }
@@ -1233,7 +1397,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_catalogue_advertises_all_twelve_tools_with_descriptions() {
+    fn the_catalogue_advertises_all_thirteen_tools_with_descriptions() {
         let tools = tool_catalogue();
         let names: Vec<&str> = tools
             .iter()
@@ -1250,6 +1414,7 @@ mod tests {
                 "adr_list",
                 "adr_submit",
                 "adr_import",
+                "adr_preview",
                 "adr_delete",
                 "adr_similar",
                 "adr_transition",

@@ -338,6 +338,7 @@ curl -s localhost:38922/mcp -H 'content-type: application/json' -d '{
 | `adr_list` | `project?`, `status?`, `limit?` | You want an overview, not a search. |
 | `adr_submit` | `project`, `external_ref`, `source`, `actor`, `scopes?`, `idempotency_key?` | You are recording a new decision. |
 | `adr_import` | `project`, `actor`, `documents[]`, `preserve_status?` | You are migrating a directory of ADRs and want one call instead of one per file. |
+| `adr_preview` | `documents[]`, `preserve_status?` | You are about to import a corpus you did not author, and want to see what would land first. |
 | `adr_delete` | `id` | You are removing a probe or a decision submitted by mistake. |
 | `adr_similar` | `id`, `limit?` | You want to know whether this has been decided before. |
 | `adr_transition` | `id`, `to`, `actor`, `reason?` | You are changing a decision's status. |
@@ -370,6 +371,22 @@ may carry `scopes`, `source_format` and `idempotency_key`. One bad document is r
 exactly like `adr_submit`. Set it to `true` only when the decisions were already accepted
 elsewhere and the corpus is being migrated. That path records each document's own front
 matter status without a human transition, which is why it is opt-in.
+
+### Previewing an import
+
+`adr_preview` parses the same documents and reports what an ingest would record, without
+writing anything. Per document it gives the title, `status_from` (`front_matter` or `none`),
+`status_declared`, `status_recorded`, the warnings, the section kinds it found, the option
+count and the number derived from `external_ref`. It also lists duplicate numbers across the
+batch, because the ingest does not reconcile them and two decisions answering to the same
+number is easier to fix before the import than after.
+
+It takes `preserve_status` for the same reason `adr_import` does: the point is to preview the
+import you are about to run, not a different one.
+
+This tool exists because the alternative was worse. A caller asking "will this document land
+accepted" had no oracle over the wire, so it read the parser source to find out. A preflight
+is a smaller surface than that answer leaking into every description.
 
 Status is read from YAML front matter only. A document that writes `- **Status:** Accepted`
 as a bullet is recorded as `proposed`, and the response carries a `status_bullet_ignored`
